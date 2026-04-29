@@ -122,12 +122,15 @@ systemctl daemon-reload
 systemctl enable redis-server >/dev/null 2>&1 || true
 systemctl restart redis-server
 systemctl enable gruppa-titan >/dev/null 2>&1
-systemctl restart gruppa-titan
+# Не прерываем установку, если сервис не стартовал —
+# тогда хотя бы nginx и cron настроятся, и юзер сможет довести до ума через .env
+systemctl restart gruppa-titan || true
 sleep 2
 if systemctl is-active --quiet gruppa-titan; then
     ok "Сервис gruppa-titan запущен"
 else
-    err "Сервис не стартовал. Логи: journalctl -u gruppa-titan -n 50"
+    warn "Сервис не стартовал — продолжаем установку. Проверьте после правки .env:"
+    warn "    sudo journalctl -u gruppa-titan -n 50"
 fi
 
 # ── 8. Nginx ──
