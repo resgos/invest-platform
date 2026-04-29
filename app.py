@@ -1234,6 +1234,77 @@ def create_app():
         flash(f'Полученная прибыль обновлена: {new_profit:,.0f} руб.', 'success')
         return redirect(request.referrer or url_for('admin_dashboard'))
 
+    # ──── Close investment (early or on schedule) ────
+    @app.route('/admin/investments/<int:inv_id>/close', methods=['POST'])
+    @admin_required
+    def close_investment(inv_id):
+        inv = Investment.query.get_or_404(inv_id)
+        if inv.status not in ('active', 'pending'):
+            flash('Можно закрыть только активную или ожидающую инвестицию', 'warning')
+            return redirect(request.referrer or url_for('admin_dashboard'))
+
+        actual_profit_str = request.form.get('actual_profit', '').strip()
+        # Если прибыль не указана явно — берём текущую actual_profit или pro-rata от ставки
+        if actual_profit_str:
+            actual_profit = safe_float(actual_profit_str)
+        else:
+            actual_profit = inv.actual_profit or 0
+
+        if actual_profit < 0:
+            flash('Прибыль не может быть отрицательной', 'danger')
+            return redirect(request.referrer or url_for('admin_dashboard'))
+
+        old_profit = inv.actual_profit or 0
+        old_status = inv.status
+        now_dt = datetime.now(timezone.utc)
+        today = date.today()
+
+        inv.actual_profit = actual_profit
+        inv.status = 'closed'
+        inv.closed_at = now_dt
+        # Фиксируем фактическую дату окончания — именно сегодня, если закрыли раньше срока
+        inv.date_end = today
+
+        # Транзакция прибыли (доначисление разницы, если явно подвинули)
+        if actual_profit > old_profit:
+            diff = actual_profit - old_profit
+            db.session.add(Transaction(
+                user_id=inv.user_id,
+                investment_id=inv.id,
+                type='profit',
+                amount=diff,
+                description=f'Прибыль по сделке "{inv.deal.title}" (закрытие, +{diff:,.0f} руб.)'
+            ))
+        # Транзакция возврата тела
+        db.session.add(Transaction(
+            user_id=inv.user_id,
+            investment_id=inv.id,
+            type='return',
+            amount=inv.amount,
+            description=f'Возврат тела инвестиции по сделке "{inv.deal.title}"'
+        ))
+
+        db.session.commit()
+        log_action('investment_closed', 'investment', inv.id,
+                   f'old_status={old_status}, actual_profit={actual_profit}, '
+                   f'closed_at={today.isoformat()}')
+
+        # TG-уведомление
+        try:
+            notify_investment_status(
+                app,
+                investor_name=inv.user.full_name or inv.user.username,
+                deal_title=inv.deal.title,
+                amount=inv.amount,
+                status='closed',
+                admin_name=current_user.full_name,
+            )
+        except Exception:
+            pass
+
+        flash(f'Инвестиция закрыта. Прибыль: {actual_profit:,.0f} ₽', 'success')
+        return redirect(request.referrer or url_for('admin_dashboard'))
+
     # ──── Audit Log ────
     @app.route('/admin/audit')
     @admin_required

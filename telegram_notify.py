@@ -222,6 +222,9 @@ def format_status_notification(investor_name, deal_title, amount, status, admin_
     if status == 'confirmed':
         icon = '✅'
         status_text = 'ПОДТВЕРЖДЕНА'
+    elif status == 'closed':
+        icon = '🏁'
+        status_text = 'ЗАКРЫТА'
     else:
         icon = '❌'
         status_text = 'ОТКЛОНЕНА'

@@ -116,11 +116,44 @@
           <td>{{ inv.invested_at.strftime('%d.%m.%Y') if inv.invested_at else '—' }}</td>
           <td>
             {% if inv.status in ['active', 'closed'] %}
-            <form method="POST" action="{{ url_for('update_actual_profit', inv_id=inv.id) }}" class="d-flex gap-1 align-items-center" style="min-width:160px">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="number" name="actual_profit" value="{{ inv.actual_profit|int }}" class="form-control form-control-sm" style="width:100px;font-size:0.8rem" min="0" step="100">
-              <button type="submit" class="btn btn-sm btn-outline-accent" title="Обновить прибыль"><i class="fas fa-save"></i></button>
-            </form>
+            <div class="d-flex gap-1 align-items-center" style="min-width:200px">
+              <form method="POST" action="{{ url_for('update_actual_profit', inv_id=inv.id) }}" class="d-flex gap-1 align-items-center">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="number" name="actual_profit" value="{{ inv.actual_profit|int }}" class="form-control form-control-sm" style="width:100px;font-size:0.8rem" min="0" step="100">
+                <button type="submit" class="btn btn-sm btn-outline-accent" title="Обновить прибыль"><i class="fas fa-save"></i></button>
+              </form>
+              {% if inv.status == 'active' %}
+              <button type="button" class="btn btn-sm btn-outline-warning"
+                      data-bs-toggle="modal" data-bs-target="#closeInvModal{{ inv.id }}"
+                      title="Закрыть инвестицию"><i class="fas fa-flag-checkered"></i></button>
+              {% endif %}
+            </div>
+            {% if inv.status == 'active' %}
+            <!-- Modal: закрытие инвестиции -->
+            <div class="modal fade" id="closeInvModal{{ inv.id }}" tabindex="-1" aria-hidden="true">
+              <div class="modal-dialog modal-dialog-centered">
+                <form method="POST" action="{{ url_for('close_investment', inv_id=inv.id) }}" class="modal-content glass-card" style="background:#1a1f2e;border:1px solid rgba(255,255,255,0.1)">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <div class="modal-header" style="border-bottom:1px solid rgba(255,255,255,0.1)">
+                    <h5 class="modal-title" style="color:#fff"><i class="fas fa-flag-checkered me-2" style="color:#f59e0b"></i>Закрытие инвестиции</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                  </div>
+                  <div class="modal-body" style="color:#cbd5e1">
+                    <p class="mb-2"><b style="color:#fff">{{ user.full_name or user.username }}</b> — {{ deal.title }}</p>
+                    <p class="mb-2">Сумма вложения: <span style="color:#fff">{{ "{:,.0f}".format(inv.amount).replace(",", " ") }} ₽</span></p>
+                    <p class="mb-3">Ожидаемая прибыль на сегодня: <span class="text-profit">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span></p>
+                    <label class="form-label">Фактическая выплаченная прибыль (₽)</label>
+                    <input type="number" name="actual_profit" value="{{ inv.actual_profit|int if inv.actual_profit else inv.expected_profit|int }}" class="form-control" min="0" step="100" required>
+                    <small class="text-muted-light d-block mt-2"><i class="fas fa-info-circle me-1"></i>Инвестиция будет переведена в статус «Закрыта». Дата окончания зафиксируется сегодняшней датой. Инвестор увидит сделку в разделе «Закрытые».</small>
+                  </div>
+                  <div class="modal-footer" style="border-top:1px solid rgba(255,255,255,0.1)">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-warning"><i class="fas fa-flag-checkered me-2"></i>Закрыть</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+            {% endif %}
             {% else %}—{% endif %}
           </td>
         </tr>{% endfor %}
