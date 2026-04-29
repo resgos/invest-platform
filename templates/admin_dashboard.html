@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Панель администратора — InvestPlatform{% endblock %}
+{% block title %}Панель администратора — Группа Титан{% endblock %}
 {% block content %}
 <section class="dashboard-section">
   <div class="container">
@@ -82,7 +82,7 @@
             <a href="{{ url_for('edit_deal', deal_id=ad.id) }}" class="btn btn-sm btn-outline-accent" title="Редактировать"><i class="fas fa-pen"></i></a>
             <a href="{{ url_for('edit_visibility', deal_id=ad.id) }}" class="btn btn-sm btn-outline-accent" title="Видимость"><i class="fas fa-eye"></i></a>
             <a href="{{ url_for('toggle_deal', deal_id=ad.id) }}" class="btn btn-sm btn-outline-accent" title="Переключить"><i class="fas fa-{% if ad.status == 'active' %}pause{% else %}play{% endif %}"></i></a>
-            <form method="POST" action="{{ url_for('delete_deal', deal_id=ad.id) }}" class="d-inline" onsubmit="return confirm('Удалить «{{ ad.title }}»?')">
+            <form method="POST" action="{{ url_for('delete_deal', deal_id=ad.id) }}" class="d-inline" data-confirm='Удалить «{{ ad.title }}»?'>
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-sm btn-outline-danger" title="Удалить"><i class="fas fa-trash"></i></button>
             </form>

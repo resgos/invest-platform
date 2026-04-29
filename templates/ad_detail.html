@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ ad.title }} — InvestPlatform{% endblock %}
+{% block title %}{{ ad.title }} — Группа Титан{% endblock %}
 {% block content %}
 <section class="detail-section">
   <div class="container">
@@ -13,7 +13,7 @@
             <img src="{{ url_for('uploaded_file', filename=imgs[0]) }}" class="detail-main-img" id="mainImg" alt="{{ ad.title }}">
             {% if imgs|length > 1 %}
             <div class="detail-thumbs">
-              {% for img in imgs %}<img src="{{ url_for('uploaded_file', filename=img) }}" class="detail-thumb {% if loop.first %}active{% endif %}" onclick="document.getElementById('mainImg').src=this.src; document.querySelectorAll('.detail-thumb').forEach(t=>t.classList.remove('active')); this.classList.add('active');" alt="">{% endfor %}
+              {% for img in imgs %}<img src="{{ url_for('uploaded_file', filename=img) }}" class="detail-thumb {% if loop.first %}active{% endif %}" alt="">{% endfor %}
             </div>
             {% endif %}
             {% else %}
@@ -77,7 +77,7 @@
           <form method="POST" action="{{ url_for('invest', deal_id=ad.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="amount" value="{{ ad.price }}">
-            <button type="submit" class="btn btn-accent w-100 btn-lg" onclick="return confirm('Подтверждаете покупку?')"><i class="fas fa-shopping-cart me-2"></i>Купить</button>
+            <button type="submit" class="btn btn-accent w-100 btn-lg btn-invest btn-buy"><i class="fas fa-shopping-cart me-2"></i>Купить</button>
           </form>
         </div>
         {% endif %}
@@ -87,9 +87,19 @@
           <h5 style="color:#fff" class="mb-3">Инвестиционные параметры</h5>
           <div class="invest-params">
             <div class="invest-param-row"><span>Стоимость актива</span><span style="color:#fff; font-weight:600">{{ "{:,.0f}".format(ad.price).replace(",", " ") }} ₽</span></div>
-            <div class="invest-param-row"><span>Доходность</span><span class="text-profit" style="font-weight:600">+{{ ad.expected_profit_pct }}%</span></div>
+            <div class="invest-param-row"><span>Доходность</span><span class="text-profit" style="font-weight:600">+{{ ad.expected_profit_pct }}% годовых</span></div>
+            {% if ad.date_end or ad.investment_term_months or ad.investment_term_days %}
             <div class="invest-param-row"><span>Ожидаемая прибыль</span><span class="text-profit" style="font-weight:600">+{{ "{:,.0f}".format(ad.price * ad.expected_profit_pct / 100 * ad.term_days_for_calc / 365).replace(",", " ") }} ₽</span></div>
+            {% else %}
+            <div class="invest-param-row"><span>Ожидаемая прибыль</span><span class="text-muted-light" style="font-style:italic">по согласованию</span></div>
+            {% endif %}
             <div class="invest-param-row"><span>Срок</span><span style="color:#fff">{{ ad.term_display }}</span></div>
+            {% if ad.date_start %}
+            <div class="invest-param-row"><span>Дата старта</span><span style="color:{% if ad.is_starting_soon %}#ff6b35;font-weight:600{% else %}#fff{% endif %}">{{ ad.date_start.strftime('%d.%m.%Y') }}{% if ad.is_starting_soon %} <i class="fas fa-fire ms-1"></i>{% endif %}</span></div>
+            {% endif %}
+            {% if ad.days_until_start is not none %}
+            <div class="invest-param-row"><span>До старта</span><span style="color:#ff6b35;font-weight:600">{% if ad.days_until_start == 0 %}сегодня{% elif ad.days_until_start == 1 %}1 день{% else %}{{ ad.days_until_start }} дн.{% endif %}</span></div>
+            {% endif %}
             {% if ad.days_remaining is not none %}
             <div class="invest-param-row"><span>Осталось</span><span style="color:{% if ad.is_expired %}var(--danger-color){% else %}var(--profit-color){% endif %}">{% if ad.is_expired %}Завершена{% else %}{{ ad.days_remaining }} дн.{% endif %}</span></div>
             {% endif %}
@@ -102,27 +112,54 @@
             <div class="progress-bar-custom"><div class="progress-fill" style="width:{{ ad.pool_pct }}%"></div></div>
           </div>
         </div>
-        {% if ad.status == 'active' and ad.remaining > 0 and not current_user.is_admin %}
+        {# Калькулятор виден ВСЕГДА (для оценки), кнопка «Инвестировать» — только когда заявки открыты #}
+        {% set accepting = ad.status == 'active' and ad.remaining > 0 and not ad.is_expired and not ad.has_started %}
         <div class="glass-card calculator-card">
-          <h5 style="color:#fff" class="mb-3"><i class="fas fa-calculator me-2"></i>Калькулятор</h5>
+          <h5 style="color:#fff" class="mb-3"><i class="fas fa-calculator me-2"></i>Калькулятор доходности</h5>
+          {% if ad.has_started %}
+          <div class="alert glass-alert mb-3" style="border-color:rgba(var(--accent-rgb),0.3);font-size:0.85rem">
+            <i class="fas fa-lock me-1" style="color:var(--accent-light)"></i>
+            Приём заявок завершён <b>{{ ad.date_start.strftime('%d.%m.%Y') }}</b>. Сделка уже в работе. Калькулятор оставлен для справки.
+          </div>
+          {% elif ad.is_starting_soon %}
+          <div class="hot-banner mb-3"><i class="fas fa-fire me-1"></i>Сбор средств до старта {{ ad.date_start.strftime('%d.%m.%Y') }} ({% if ad.days_until_start == 0 %}сегодня{% elif ad.days_until_start == 1 %}через 1 день{% else %}через {{ ad.days_until_start }} дн.{% endif %})</div>
+          {% endif %}
           <form method="POST" action="{{ url_for('invest', deal_id=ad.id) }}" id="investForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="mb-3">
-              <label class="form-label">Сумма инвестиции (₽)</label>
-              <input type="number" name="amount" id="calcAmount" class="form-control" min="{{ ad.min_investment }}" max="{{ ad.remaining }}" step="1" value="{{ ad.min_investment|int }}">
+            <div class="row g-2 mb-3">
+              <div class="col-7">
+                <label class="form-label">Сумма инвестиции (₽)</label>
+                <input type="number" name="amount" id="calcAmount" class="form-control"
+                       {% if ad.min_investment %}min="{{ ad.min_investment }}"{% endif %}
+                       {% if accepting and ad.remaining %}max="{{ ad.remaining }}"{% endif %}
+                       step="1" value="{{ (ad.min_investment or 100000)|int }}"
+                       data-profit-pct="{{ ad.expected_profit_pct }}"
+                       {% if ad.date_start %}data-date-start="{{ ad.date_start.isoformat() }}"{% endif %}
+                       {% if ad.date_end %}data-date-end="{{ ad.date_end.isoformat() }}"{% endif %}
+                       {% if ad.investment_term_months %}data-term-months="{{ ad.investment_term_months }}"{% endif %}
+                       {% if ad.investment_term_days %}data-term-days="{{ ad.investment_term_days }}"{% endif %}>
+              </div>
+              <div class="col-5">
+                <label class="form-label">Срок (дн.) <small class="text-muted">по желанию</small></label>
+                <input type="number" id="calcCustomDays" class="form-control" min="1" max="3650" step="1"
+                       placeholder="по сделке">
+              </div>
             </div>
             <div class="calc-results mb-3" id="calcResults">
-              <div class="calc-row"><span class="text-muted-light">Срок</span><span class="calc-value" id="calcTerm">—</span></div>
+              <div class="calc-row"><span class="text-muted-light">Период расчёта</span><span class="calc-value" id="calcTerm">—</span></div>
               <div class="calc-row"><span class="text-muted-light">Ожидаемая прибыль</span><span class="calc-value text-profit" id="calcProfit">—</span></div>
               <div class="calc-row"><span class="text-muted-light">В месяц</span><span class="calc-value" id="calcMonthly">—</span></div>
               <div class="calc-row"><span class="text-muted-light">В день</span><span class="calc-value" id="calcDaily">—</span></div>
               <div class="calc-row"><span class="text-muted-light calc-total">Итого возврат</span><span class="calc-value calc-total text-profit" id="calcTotal">—</span></div>
             </div>
-            <button type="submit" class="btn btn-accent w-100" onclick="return confirm('Подтверждаете инвестицию?')"><i class="fas fa-hand-holding-usd me-2"></i>Инвестировать</button>
+            {% if accepting and not current_user.is_admin %}
+            <button type="submit" class="btn btn-accent w-100 btn-invest"><i class="fas fa-hand-holding-usd me-2"></i>Инвестировать</button>
+            {% elif ad.has_started and not current_user.is_admin %}
+            <button type="button" class="btn btn-outline-light w-100" disabled><i class="fas fa-lock me-2"></i>Приём завершён</button>
+            {% endif %}
           </form>
         </div>
-        {% endif %}
-        {% endif %}
+        {% endif %}{# /urgent_sale else #}
         {% if ad.contact_info %}
         <div class="glass-card mt-4" style="padding:20px"><h6 style="color:#fff"><i class="fas fa-phone me-2"></i>Контакты</h6><p class="text-muted-light mb-0">{{ ad.contact_info }}</p></div>
         {% endif %}
@@ -132,74 +169,5 @@
 </section>
 {% endblock %}
 {% block scripts %}
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const amt = document.getElementById('calcAmount');
-    if (!amt) return;
-    const pct = {{ ad.expected_profit_pct }};
-
-    // Deal term settings
-    const dealDateEnd = {% if ad.date_end %}'{{ ad.date_end.isoformat() }}'{% else %}null{% endif %};
-    const dealTermMonths = {% if ad.investment_term_months %}{{ ad.investment_term_months }}{% else %}null{% endif %};
-    const dealTermDays = {% if ad.investment_term_days %}{{ ad.investment_term_days }}{% else %}null{% endif %};
-
-    function calcTerm() {
-        const today = new Date();
-        today.setHours(0,0,0,0);
-
-        let candidates = [];
-
-        if (dealDateEnd) {
-            candidates.push(new Date(dealDateEnd + 'T00:00:00'));
-        }
-        if (dealTermMonths) {
-            let d = new Date(today);
-            d.setMonth(d.getMonth() + dealTermMonths);
-            candidates.push(d);
-        }
-        if (dealTermDays) {
-            let d = new Date(today);
-            d.setDate(d.getDate() + dealTermDays);
-            candidates.push(d);
-        }
-
-        let endDate = null;
-        if (candidates.length > 0) {
-            endDate = candidates.reduce((a, b) => a < b ? a : b);
-        }
-
-        let months = 12, days = 365, termText = '';
-        if (endDate) {
-            const diffDays = Math.max(Math.round((endDate - today) / (1000*60*60*24)), 1);
-            days = diffDays;
-            months = Math.max(Math.round(diffDays / 30), 1);
-            const startStr = today.toLocaleDateString('ru-RU');
-            const endStr = endDate.toLocaleDateString('ru-RU');
-            termText = startStr + ' — ' + endStr + ' (' + days + ' дн. / ' + months + ' мес.)';
-        } else {
-            termText = 'Бессрочно';
-            days = 365;
-            months = 12;
-        }
-
-        return {months, days, termText};
-    }
-
-    function calc() {
-        const a = parseFloat(amt.value) || 0;
-        const {months, days, termText} = calcTerm();
-        const profit = a * pct / 100 * (days / 365);
-        const monthly = months > 0 ? profit / months : 0;
-        const daily = days > 0 ? profit / days : 0;
-
-        document.getElementById('calcTerm').textContent = termText;
-        document.getElementById('calcProfit').textContent = profit.toLocaleString('ru-RU', {maximumFractionDigits:0}) + ' ₽';
-        document.getElementById('calcMonthly').textContent = monthly.toLocaleString('ru-RU', {maximumFractionDigits:0}) + ' ₽';
-        document.getElementById('calcDaily').textContent = daily.toLocaleString('ru-RU', {maximumFractionDigits:0}) + ' ₽';
-        document.getElementById('calcTotal').textContent = (a + profit).toLocaleString('ru-RU', {maximumFractionDigits:0}) + ' ₽';
-    }
-    amt.addEventListener('input', calc);
-    calc();
-});
-</script>
+{# Логика калькулятора в static/js/script.js, читает data-* атрибуты #calcAmount #}
 {% endblock %}

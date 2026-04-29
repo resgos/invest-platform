@@ -11,5 +11,8 @@ email-validator==2.2.0
 python-dateutil==2.9.0
 gunicorn==23.0.0
 flask-bcrypt==1.0.1
+# Опционально: Redis-бэкенд для flask-limiter (multi-worker prod)
+# RATE_LIMIT_STORAGE_URI=redis://localhost:6379/0
+# redis==5.0.8
 # Опционально: для SOCKS5 прокси Telegram (pip install pysocks)
 # pysocks==1.7.1

@@ -15,3 +15,9 @@ instance/
 *.log
 .vscode/
 .idea/
+
+# Локальные IDE/Claude конфиги
+.claude/
+
+# Состояние Telegram-уведомлений
+.notify_state.json

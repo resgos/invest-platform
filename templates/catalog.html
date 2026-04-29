@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Каталог — InvestPlatform{% endblock %}
+{% block title %}Каталог — Группа Титан{% endblock %}
 {% block content %}
 <section class="catalog-section">
   <div class="container">
@@ -12,6 +12,9 @@
     <div class="tab-bar mb-3">
       <a href="{{ url_for('catalog', tab='active', category=category, risk=risk, sort=sort) }}" class="tab-item {% if tab == 'active' %}active{% endif %}">
         <i class="fas fa-check-circle me-1"></i>Активные <span class="tab-count">{{ active_count }}</span>
+      </a>
+      <a href="{{ url_for('catalog', tab='hot', category=category, risk=risk, sort=sort) }}" class="tab-item tab-hot {% if tab == 'hot' %}active{% endif %}">
+        <i class="fas fa-fire me-1"></i>Скоро старт <span class="tab-count">{{ hot_count }}</span>
       </a>
       <a href="{{ url_for('catalog', tab='closed', category=category, risk=risk, sort=sort) }}" class="tab-item {% if tab == 'closed' %}active{% endif %}">
         <i class="fas fa-archive me-1"></i>Завершённые <span class="tab-count">{{ closed_count }}</span>
@@ -60,6 +63,7 @@
             <option value="profit_desc" {{ 'selected' if sort=='profit_desc' }}>По доходности ↓</option>
             <option value="price_asc" {{ 'selected' if sort=='price_asc' }}>По цене ↑</option>
             <option value="price_desc" {{ 'selected' if sort=='price_desc' }}>По цене ↓</option>
+            <option value="start_date" {{ 'selected' if sort=='start_date' }}>По дате старта ↑</option>
             <option value="end_date" {{ 'selected' if sort=='end_date' }}>По дате окончания</option>
           </select>
         </div>
@@ -71,13 +75,16 @@
     <div class="row g-4">
       {% for ad in ads %}
       <div class="col-md-6 col-lg-4">
-        <div class="glass-card investment-card {% if ad.is_expired %}card-expired{% endif %}">
+        <div class="glass-card investment-card card-clickable {% if ad.is_expired %}card-expired{% endif %} {% if ad.is_starting_soon %}card-hot{% endif %}"
+             data-card-href="{{ url_for('deal_detail', deal_id=ad.id) }}"
+             tabindex="0" role="link" aria-label="{{ ad.title }}">
           <div class="card-img-wrapper">
             {% if ad.images %}<img src="{{ url_for('uploaded_file', filename=ad.images.split(',')[0]) }}" class="card-img-invest" alt="{{ ad.title }}">
             {% else %}<img src="{{ url_for('static', filename='img/placeholders/' + ad.category + '.jpg') }}" class="card-img-invest" alt="{{ ad.title }}">{% endif %}
             {% if ad.is_urgent_sale %}<span class="card-badge" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;font-weight:600">Срочная продажа</span>
             {% else %}<span class="card-badge badge-{{ ad.risk_level }}">{{ {'low':'Низкий','medium':'Средний','high':'Высокий'}.get(ad.risk_level, ad.risk_level) }}</span>{% endif %}
-            {% if ad.is_expired %}<span class="card-badge-status badge-closed-status">Завершена</span>{% endif %}
+            {% if ad.is_expired %}<span class="card-badge-status badge-closed-status">Завершена</span>
+            {% elif ad.is_starting_soon %}<span class="card-badge-status badge-hot"><i class="fas fa-fire me-1"></i>{% if ad.days_until_start == 0 %}Старт сегодня{% elif ad.days_until_start == 1 %}Старт завтра{% else %}Старт через {{ ad.days_until_start }} дн.{% endif %}</span>{% endif %}
           </div>
           <div class="card-body-invest">
             <div class="card-title-invest">{{ ad.title }}</div>
@@ -109,7 +116,7 @@
       {% endfor %}
     </div>
     {% else %}
-    <div class="glass-card text-center py-5"><i class="fas fa-inbox fa-3x mb-3" style="color:var(--text-muted)"></i><h4 style="color:#fff">Нет предложений</h4><p class="text-muted-light">{% if tab == 'closed' %}Нет завершённых сделок{% elif tab == 'active' %}Нет активных сделок{% else %}Новые сделки появятся в ближайшее время{% endif %}</p></div>
+    <div class="glass-card text-center py-5"><i class="fas fa-inbox fa-3x mb-3" style="color:var(--text-muted)"></i><h4 style="color:#fff">Нет предложений</h4><p class="text-muted-light">{% if tab == 'closed' %}Нет завершённых сделок{% elif tab == 'active' %}Нет активных сделок{% elif tab == 'hot' %}Нет сделок, стартующих в ближайшие 7 дней{% else %}Новые сделки появятся в ближайшее время{% endif %}</p></div>
     {% endif %}
   </div>
 </section>

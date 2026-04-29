@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}InvestPlatform{% endblock %}</title>
+    <title>{% block title %}Группа Титан — инвестиционная платформа{% endblock %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -12,7 +12,7 @@
 <body>
 <nav class="navbar navbar-expand-lg">
   <div class="container-fluid px-4">
-    <a class="navbar-brand" href="{{ url_for('index') }}"><i class="fas fa-chart-line me-2"></i>InvestPlatform</a>
+    <a class="navbar-brand" href="{{ url_for('index') }}"><i class="fas fa-mountain me-2" style="color:#8aa6c4"></i>Группа <span class="brand-titan">Титан</span></a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
       <span class="navbar-toggler-icon"></span>
     </button>
@@ -52,13 +52,13 @@
 <footer class="footer-section">
   <div class="container">
     <div class="row">
-      <div class="col-md-4 mb-3"><h5><i class="fas fa-chart-line me-2"></i>InvestPlatform</h5><p class="text-muted-light">Платформа для инвестирования в залоговые активы.</p></div>
+      <div class="col-md-4 mb-3"><h5><i class="fas fa-mountain me-2" style="color:#8aa6c4"></i>Группа <span class="brand-titan">Титан</span></h5><p class="text-muted-light">Закрытая инвестиционная платформа: залоговые активы, прозрачные сделки, доступ по приглашению.</p></div>
       <div class="col-md-4 mb-3"><h6>Навигация</h6><ul class="list-unstyled">
         {% if current_user.is_authenticated %}<li><a href="{{ url_for('catalog') }}">Каталог</a></li><li><a href="{{ url_for('dashboard') }}">Личный кабинет</a></li>{% endif %}
       </ul></div>
-      <div class="col-md-4 mb-3"><h6>Контакты</h6><p class="text-muted-light"><i class="fas fa-envelope me-2"></i>info@investplatform.ru</p></div>
+      <div class="col-md-4 mb-3"><h6>Контакты</h6><p class="text-muted-light mb-1"><i class="fas fa-envelope me-2"></i>info@gruppa-titan.ru</p><p class="text-muted-light mb-0"><i class="fab fa-telegram me-2"></i>@gruppa_titan</p></div>
     </div>
-    <hr class="footer-hr"><p class="text-center text-muted-light mb-0">&copy; 2026 InvestPlatform. Все права защищены.</p>
+    <hr class="footer-hr"><p class="text-center text-muted-light mb-0">&copy; 2026 Группа Титан. Все права защищены.</p>
   </div>
 </footer>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

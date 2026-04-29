@@ -35,12 +35,24 @@ def create_app():
     login_manager.login_message = 'Требуется авторизация'
     login_manager.login_message_category = 'error'
 
-    limiter = Limiter(
-        app=app,
-        key_func=get_remote_address,
-        default_limits=["200 per minute"],
-        storage_uri="memory://",
-    )
+    # Storage URI: memory:// для dev, redis://... для multi-worker prod (через ENV RATE_LIMIT_STORAGE_URI)
+    rate_storage = app.config.get('RATE_LIMIT_STORAGE_URI', 'memory://')
+    try:
+        limiter = Limiter(
+            app=app,
+            key_func=get_remote_address,
+            default_limits=["200 per minute"],
+            storage_uri=rate_storage,
+        )
+    except Exception as e:
+        # Если Redis недоступен — деградируем на in-memory с предупреждением, не падаем
+        app.logger.warning(f'Limiter storage {rate_storage!r} недоступен ({e}), fallback на memory://')
+        limiter = Limiter(
+            app=app,
+            key_func=get_remote_address,
+            default_limits=["200 per minute"],
+            storage_uri='memory://',
+        )
 
     ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'doc', 'docx'}
 
@@ -57,6 +69,19 @@ def create_app():
         response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
+        # CSP — узкий профиль: разрешаем только нужные CDN (Bootstrap, FontAwesome, Google Fonts)
+        # 'unsafe-inline' для style — пока в шаблонах есть inline-style (планируется вынос в CSS-классы)
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; "
+            "img-src 'self' data:; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; "
+            "script-src 'self' https://cdn.jsdelivr.net; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
         return response
 
     # ──── Session rotation ────
@@ -69,7 +94,11 @@ def create_app():
     # ──── Login Manager ────
     @login_manager.user_loader
     def load_user(user_id):
-        return db.session.get(User, int(user_id))
+        try:
+            uid = int(user_id)
+        except (TypeError, ValueError):
+            return None
+        return db.session.get(User, uid)
 
     # ──── Helpers ────
     def hash_password(password):
@@ -112,21 +141,25 @@ def create_app():
         except (ValueError, TypeError):
             return default
 
+    def effective_start_date(deal, fallback):
+        """Реальная дата начала инвестиции: фиксированный старт сделки (если задан и в будущем),
+        иначе — fallback (обычно сегодня)."""
+        if deal.date_start and deal.date_start > fallback:
+            return deal.date_start
+        return fallback
+
     def calc_investment_end_date(deal, start_date):
         """Calculate investment end date based on Deal's settings.
-        Mode A: deal has date_end → investment ends at deal.date_end
-        Mode B: deal has term_months → investment ends start_date + N months
-        Mode C: deal has term_days → investment ends start_date + N days
-        Multiple: use the earliest
-        Neither: no end date
+        Срок отсчитывается от effective_start_date (фикс. старт сделки приоритетнее).
         """
+        base = effective_start_date(deal, start_date) if start_date else None
         candidates = []
         if deal.date_end:
             candidates.append(deal.date_end)
-        if deal.investment_term_months and start_date:
-            candidates.append(start_date + relativedelta(months=deal.investment_term_months))
-        if deal.investment_term_days and start_date:
-            candidates.append(start_date + timedelta(days=deal.investment_term_days))
+        if deal.investment_term_months and base:
+            candidates.append(base + relativedelta(months=deal.investment_term_months))
+        if deal.investment_term_days and base:
+            candidates.append(base + timedelta(days=deal.investment_term_days))
 
         if candidates:
             return min(candidates)
@@ -232,28 +265,48 @@ def create_app():
     def index():
         user = current_user if current_user.is_authenticated else None
 
-        # Stats - only deals visible to user
+        # Stats - только активные сделки, ещё не стартовавшие (или без фикс. старта),
+        # и только видимые пользователю
+        today = date.today()
+        hot_horizon = today + timedelta(days=Deal.HOT_THRESHOLD_DAYS)
+        not_started_filter = db.or_(Deal.date_start.is_(None), Deal.date_start > today)
+        not_expired_filter = db.or_(Deal.date_end.is_(None), Deal.date_end >= today)
+
         if user and user.is_admin:
-            deals_q = Deal.query.filter_by(status='active')
+            deals_q = Deal.query.filter(Deal.status == 'active', not_started_filter, not_expired_filter)
         elif user:
-            deals_q = Deal.query.filter_by(status='active').filter(
-                db.or_(
-                    Deal.visibility == 'all',
-                    Deal.visible_to.any(id=user.id)
-                )
+            deals_q = Deal.query.filter(
+                Deal.status == 'active', not_started_filter, not_expired_filter,
+                db.or_(Deal.visibility == 'all', Deal.visible_to.any(id=user.id))
             )
         else:
-            deals_q = Deal.query.filter_by(status='active', visibility='all')
+            deals_q = Deal.query.filter(
+                Deal.status == 'active', not_started_filter, not_expired_filter,
+                Deal.visibility == 'all'
+            )
 
         total_ads = deals_q.count()
         total_invested = db.session.query(db.func.coalesce(db.func.sum(Investment.amount), 0)).filter_by(status='active').scalar()
         total_investors = User.query.filter_by(role='investor', is_active=True).count()
         avg_profit = deals_q.with_entities(db.func.coalesce(db.func.avg(Deal.expected_profit_pct), 0)).scalar()
-        recent_deals = deals_q.order_by(Deal.created_at.desc()).limit(6).all()
+        hot_count = deals_q.filter(
+            Deal.date_start.isnot(None),
+            Deal.date_start > today,
+            Deal.date_start <= hot_horizon
+        ).count()
+        # Горящие — наверху, потом по дате создания
+        is_hot_expr = db.case(
+            (db.and_(Deal.date_start.isnot(None),
+                     Deal.date_start > today,
+                     Deal.date_start <= hot_horizon), 0),
+            else_=1
+        )
+        recent_deals = deals_q.order_by(is_hot_expr, Deal.created_at.desc()).limit(6).all()
 
         return render_template('index.html',
                                total_ads=total_ads, total_invested=total_invested,
                                total_investors=total_investors, avg_profit=avg_profit,
+                               hot_count=hot_count,
                                recent_deals=recent_deals)
 
     @app.route('/catalog')
@@ -276,18 +329,29 @@ def create_app():
                 )
             )
 
-        # Tab filter — based on Deal.status + Deal.date_end (no Deal.date_start)
+        # Tab filter. Сделка «активна» в каталоге, пока ещё не стартовала
+        # (либо у неё нет фиксированного старта). После date_start уходит в архив.
         today = date.today()
+        hot_horizon = today + timedelta(days=Deal.HOT_THRESHOLD_DAYS)
         if tab == 'active':
             q = q.filter(
                 Deal.status == 'active',
-                db.or_(Deal.date_end.is_(None), Deal.date_end >= today)
+                db.or_(Deal.date_end.is_(None), Deal.date_end >= today),
+                db.or_(Deal.date_start.is_(None), Deal.date_start > today)
+            )
+        elif tab == 'hot':
+            q = q.filter(
+                Deal.status == 'active',
+                Deal.date_start.isnot(None),
+                Deal.date_start > today,
+                Deal.date_start <= hot_horizon
             )
         elif tab == 'closed':
             q = q.filter(
                 db.or_(
                     Deal.status.in_(['closed', 'paused']),
-                    db.and_(Deal.date_end.isnot(None), Deal.date_end < today)
+                    db.and_(Deal.date_end.isnot(None), Deal.date_end < today),
+                    db.and_(Deal.date_start.isnot(None), Deal.date_start <= today)
                 )
             )
         # tab == 'all' — no status filter
@@ -319,8 +383,20 @@ def create_app():
             q = q.order_by(Deal.price.desc())
         elif sort == 'end_date':
             q = q.order_by(Deal.date_end.asc())
+        elif sort == 'start_date':
+            # NULL → в конец, затем по возрастанию даты старта
+            q = q.order_by(Deal.date_start.is_(None).asc(), Deal.date_start.asc())
+        elif tab == 'hot':
+            q = q.order_by(Deal.date_start.asc())
         else:
-            q = q.order_by(Deal.created_at.desc())
+            # Default: горящие сделки наверху, затем по дате создания
+            is_hot_expr = db.case(
+                (db.and_(Deal.date_start.isnot(None),
+                         Deal.date_start > today,
+                         Deal.date_start <= hot_horizon), 0),
+                else_=1
+            )
+            q = q.order_by(is_hot_expr, Deal.created_at.desc())
 
         deals = q.all()
 
@@ -333,19 +409,28 @@ def create_app():
             )
         active_count = base_q.filter(
             Deal.status == 'active',
-            db.or_(Deal.date_end.is_(None), Deal.date_end >= today)
+            db.or_(Deal.date_end.is_(None), Deal.date_end >= today),
+            db.or_(Deal.date_start.is_(None), Deal.date_start > today)
+        ).count()
+        hot_count = base_q.filter(
+            Deal.status == 'active',
+            Deal.date_start.isnot(None),
+            Deal.date_start > today,
+            Deal.date_start <= hot_horizon
         ).count()
         closed_count = base_q.filter(
             db.or_(
                 Deal.status.in_(['closed', 'paused']),
-                db.and_(Deal.date_end.isnot(None), Deal.date_end < today)
+                db.and_(Deal.date_end.isnot(None), Deal.date_end < today),
+                db.and_(Deal.date_start.isnot(None), Deal.date_start <= today)
             )
         ).count()
         all_count = base_q.count()
 
         return render_template('catalog.html', ads=deals, category=cat, risk=risk, sort=sort,
                                tab=tab, date_from=date_from, date_to=date_to,
-                               active_count=active_count, closed_count=closed_count, all_count=all_count)
+                               active_count=active_count, hot_count=hot_count,
+                               closed_count=closed_count, all_count=all_count)
 
     @app.route('/deal/<int:deal_id>')
     @login_required
@@ -449,29 +534,53 @@ def create_app():
         if deal.status != 'active':
             flash('Сделка не активна', 'error')
             return redirect(url_for('catalog'))
+        if deal.is_expired:
+            flash('Срок инвестирования по сделке истёк', 'error')
+            return redirect(url_for('deal_detail', deal_id=deal.id))
+        # Сделка с фиксированным стартом принимает заявки только ДО даты старта.
+        # После — она уже в работе, новых инвесторов не подключаем.
+        if deal.date_start and deal.date_start <= date.today():
+            flash(
+                f'Приём заявок завершён {deal.date_start.strftime("%d.%m.%Y")} '
+                f'— сделка уже в работе.',
+                'error'
+            )
+            return redirect(url_for('deal_detail', deal_id=deal.id))
 
         amount = safe_float(request.form.get('amount', 0))
+        if amount <= 0:
+            flash('Введите корректную сумму инвестиции', 'error')
+            return redirect(url_for('deal_detail', deal_id=deal.id))
         if amount < deal.min_investment:
             flash(f'Минимальная сумма: {deal.min_investment:,.0f} руб.', 'error')
             return redirect(url_for('deal_detail', deal_id=deal.id))
-        if amount > deal.remaining:
-            flash(f'Доступно: {deal.remaining:,.0f} руб.', 'error')
+
+        # Учитываем pending-заявки в остатке: иначе несколько инвесторов могут «перебронировать» пул
+        pending_amount = db.session.query(
+            db.func.coalesce(db.func.sum(Investment.amount), 0)
+        ).filter(
+            Investment.deal_id == deal.id,
+            Investment.status == 'pending'
+        ).scalar() or 0
+        available = max(deal.remaining - pending_amount, 0)
+        if amount > available:
+            flash(f'Доступно с учётом ожидающих заявок: {available:,.0f} руб.', 'error')
             return redirect(url_for('deal_detail', deal_id=deal.id))
 
         today_date = date.today()
+        inv_start_date = effective_start_date(deal, today_date)
         inv_end_date = calc_investment_end_date(deal, today_date)
 
         # For urgent_sale deals, no profit calculation
         if deal.is_urgent_sale:
             ep = 0
-            actual_days = 0
-        else:
+        elif inv_end_date:
             # Pro-rata profit: annual rate * (actual_days / 365)
-            if inv_end_date:
-                actual_days = max((inv_end_date - today_date).days, 1)
-            else:
-                actual_days = 365  # fallback for open-ended deals
+            actual_days = max((inv_end_date - inv_start_date).days, 1)
             ep = amount * (deal.expected_profit_pct / 100) * (actual_days / 365)
+        else:
+            # Бессрочная сделка без срока — прибыль рассчитывается админом вручную при закрытии
+            ep = 0
 
         inv = Investment(
             user_id=current_user.id,
@@ -479,7 +588,7 @@ def create_app():
             amount=amount,
             expected_profit=ep,
             status='pending',
-            date_start=today_date,
+            date_start=inv_start_date,
             date_end=inv_end_date
         )
         db.session.add(inv)
@@ -744,6 +853,7 @@ def create_app():
                 subcategory=form.subcategory.data.strip() if form.subcategory.data else None,
                 price=form.price.data,
                 expected_profit_pct=0 if is_urgent else (form.expected_profit_pct.data or 0),
+                date_start=form.date_start.data if form.date_start.data else None,
                 date_end=form.date_end.data if form.date_end.data else None,
                 investment_term_months=None if is_urgent else (form.investment_term_months.data if form.investment_term_months.data else None),
                 investment_term_days=None if is_urgent else (form.investment_term_days.data if form.investment_term_days.data else None),
@@ -807,6 +917,7 @@ def create_app():
             deal.subcategory = form.subcategory.data.strip() if form.subcategory.data else None
             deal.price = form.price.data
             deal.expected_profit_pct = 0 if is_urgent else (form.expected_profit_pct.data or 0)
+            deal.date_start = form.date_start.data if form.date_start.data else None
             deal.date_end = form.date_end.data if form.date_end.data else None
             deal.investment_term_months = None if is_urgent else (form.investment_term_months.data if form.investment_term_months.data else None)
             deal.investment_term_days = None if is_urgent else (form.investment_term_days.data if form.investment_term_days.data else None)
@@ -939,20 +1050,22 @@ def create_app():
             inv_start = form.inv_date_start.data if form.inv_date_start.data else date.today()
             inv_end = form.inv_date_end.data if form.inv_date_end.data else calc_investment_end_date(deal, inv_start)
 
-            # Auto-calculate expected profit pro-rata if not manually set
+            # Если админ задал прибыль вручную — фиксируем флагом manual, чтобы pro-rata не перезатёрла
+            manual_ep = bool(form.expected_profit.data and form.expected_profit.data > 0)
             ep = form.expected_profit.data
-            if not ep or ep == 0:
+            if not manual_ep:
                 if inv_end:
                     actual_days = max((inv_end - inv_start).days, 1)
+                    ep = form.amount.data * (deal.expected_profit_pct / 100) * (actual_days / 365)
                 else:
-                    actual_days = 365
-                ep = form.amount.data * (deal.expected_profit_pct / 100) * (actual_days / 365)
+                    ep = 0
 
             inv = Investment(
                 user_id=user.id,
                 deal_id=deal.id,
                 amount=form.amount.data,
                 expected_profit=ep,
+                expected_profit_manual=manual_ep,
                 actual_profit=form.actual_profit.data if form.actual_profit.data else 0,
                 status=form.status.data,
                 notes=form.notes.data.strip() if form.notes.data else None,
@@ -1013,15 +1126,16 @@ def create_app():
 
         # Set investment dates at confirmation time
         confirm_date = date.today()
-        inv.date_start = confirm_date
+        inv.date_start = effective_start_date(deal, confirm_date)
         inv.date_end = calc_investment_end_date(deal, confirm_date)
 
-        # Recalculate expected profit pro-rata by days
-        if inv.date_end:
-            actual_days = max((inv.date_end - confirm_date).days, 1)
-        else:
-            actual_days = 365
-        inv.expected_profit = inv.amount * (deal.expected_profit_pct / 100) * (actual_days / 365)
+        # Recalculate expected profit pro-rata by days (если не задана вручную)
+        if not inv.expected_profit_manual:
+            if inv.date_end:
+                actual_days = max((inv.date_end - inv.date_start).days, 1)
+                inv.expected_profit = inv.amount * (deal.expected_profit_pct / 100) * (actual_days / 365)
+            else:
+                inv.expected_profit = 0
 
         # Update the transaction description
         txn = Transaction.query.filter_by(investment_id=inv.id, type='investment').first()
@@ -1187,7 +1301,7 @@ def create_app():
         proxy_url = app.config.get('TELEGRAM_PROXY', '')
 
         text = (
-            '🔧 <b>Тест подключения InvestPlatform</b>\n'
+            '🔧 <b>Тест подключения · Группа Титан</b>\n'
             '━━━━━━━━━━━━━━━━━━━━━\n'
             f'👤 Отправил: {current_user.full_name}\n'
             f'🕐 {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}\n'
@@ -1237,8 +1351,19 @@ def create_app():
     def uploaded_file(filename):
         # Sanitize filename to prevent directory traversal
         fn = secure_filename(filename)
-        if fn != filename:
+        if fn != filename or '/' in filename or '\\' in filename:
             abort(404)
+
+        # Админ имеет доступ ко всему
+        if not current_user.is_admin:
+            # Файл должен принадлежать сделке, видимой пользователю
+            owning_deal = Deal.query.filter(Deal.images.like(f'%{fn}%')).first()
+            if not owning_deal or not owning_deal.user_can_see(current_user):
+                abort(403)
+            # Дополнительная точная проверка (LIKE может ложно срабатывать на подстроках)
+            if fn not in (owning_deal.images or '').split(','):
+                abort(403)
+
         return send_from_directory(app.config['UPLOAD_FOLDER'], fn)
 
     # ──── Error handlers ────

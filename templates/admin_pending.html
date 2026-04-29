@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Заявки на инвестиции — InvestPlatform{% endblock %}
+{% block title %}Заявки на инвестиции — Группа Титан{% endblock %}
 {% block content %}
 <section class="dashboard-section">
   <div class="container">
@@ -44,15 +44,15 @@
               <td>{{ inv.invested_at.strftime('%d.%m.%Y %H:%M') if inv.invested_at else '—' }}</td>
               <td>
                 <div class="d-flex gap-2">
-                  <form method="POST" action="{{ url_for('confirm_investment', inv_id=inv.id) }}" onsubmit="return confirm('Подтвердить инвестицию?')">
+                  <form method="POST" action="{{ url_for('confirm_investment', inv_id=inv.id) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-success" title="Подтвердить">
+                    <button type="submit" class="btn btn-sm btn-success" title="Подтвердить" data-confirm="Подтвердить инвестицию?">
                       <i class="fas fa-check me-1"></i>Подтвердить
                     </button>
                   </form>
-                  <button type="button" class="btn btn-sm btn-outline-danger" title="Отклонить" 
-                          data-inv-id="{{ inv.id }}" data-investor="{{ user.full_name }}" data-deal="{{ deal.title }}" data-amount="{{ inv.amount }}"
-                          onclick="showRejectModal(this)">
+                  <button type="button" class="btn btn-sm btn-outline-danger" title="Отклонить"
+                          data-reject-action="{{ url_for('reject_investment', inv_id=inv.id) }}"
+                          data-investor="{{ user.full_name }}" data-deal="{{ deal.title }}" data-amount="{{ inv.amount }}">
                     <i class="fas fa-times me-1"></i>Отклонить
                   </button>
                 </div>
@@ -100,17 +100,4 @@
   </div>
 </div>
 
-<script>
-function showRejectModal(btn) {
-  var invId = btn.getAttribute('data-inv-id');
-  var investorName = btn.getAttribute('data-investor');
-  var dealTitle = btn.getAttribute('data-deal');
-  var amount = parseFloat(btn.getAttribute('data-amount')).toLocaleString('ru-RU');
-  document.getElementById('rejectInfo').textContent = 
-    'Отклонить заявку от ' + investorName + ' на ' + amount + ' ₽ в сделку «' + dealTitle + '»?';
-  document.getElementById('rejectForm').action = '/admin/investments/' + invId + '/reject';
-  document.getElementById('rejectReason').value = '';
-  new bootstrap.Modal(document.getElementById('rejectModal')).show();
-}
-</script>
 {% endblock %}

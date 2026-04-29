@@ -113,7 +113,7 @@ class DealForm(FlaskForm):
         Optional(),
         NumberRange(min=0, max=1000)
     ])
-    # NO date_start — it belongs on Investment
+    date_start = DateField('Дата старта сделки', format='%Y-%m-%d', validators=[Optional()])
     date_end = DateField('Дата окончания приёма', format='%Y-%m-%d', validators=[Optional()])
     investment_term_months = IntegerField('Срок инвестиции (мес.)', validators=[
         Optional(), NumberRange(min=1, max=600, message='От 1 до 600 месяцев')
@@ -121,6 +121,10 @@ class DealForm(FlaskForm):
     investment_term_days = IntegerField('Срок инвестиции (дн.)', validators=[
         Optional(), NumberRange(min=1, max=18000, message='От 1 до 18000 дней')
     ])
+
+    def validate_date_end(self, field):
+        if field.data and self.date_start.data and field.data < self.date_start.data:
+            raise ValidationError('Дата окончания не может быть раньше даты старта')
     min_investment = FloatField('Мин. инвестиция (руб.)', validators=[
         Optional(),
         NumberRange(min=0)

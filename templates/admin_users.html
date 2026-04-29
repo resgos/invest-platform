@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Пользователи — InvestPlatform{% endblock %}
+{% block title %}Пользователи — Группа Титан{% endblock %}
 {% block content %}
 <section class="dashboard-section">
   <div class="container">
@@ -18,7 +18,7 @@
               <td style="font-weight:500; color:#fff">{{ u.full_name }}</td>
               <td>{{ u.username }}</td>
               <td>{{ u.email }}</td>
-              <td>{% if u.role == 'admin' %}<span class="badge" style="background:rgba(239,68,68,0.2); color:#ef4444">Админ</span>{% else %}<span class="badge" style="background:rgba(99,102,241,0.2); color:var(--accent-light)">Инвестор</span>{% endif %}</td>
+              <td>{% if u.role == 'admin' %}<span class="badge" style="background:rgba(239,68,68,0.2); color:#ef4444">Админ</span>{% else %}<span class="badge" style="background:rgba(var(--accent-rgb),0.2); color:var(--accent-light)">Инвестор</span>{% endif %}</td>
               <td>{% if u.is_active %}<span class="badge bg-success-glow">Активен</span>{% else %}<span class="badge bg-secondary">Заблокирован</span>{% endif %}
                 {% if u.locked_until %}<br><small class="text-muted">Блок. до {{ u.locked_until.strftime('%d.%m %H:%M') }}</small>{% endif %}
               </td>

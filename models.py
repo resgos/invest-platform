@@ -47,14 +47,14 @@ class Deal(db.Model):
     Deal (объявление/предложение).
 
     Поля срока:
+      - date_start (Date, optional) — фиксированная дата старта сделки.
+        Если указана, инвестиции начинают действовать с этой даты, а не с даты
+        подтверждения. До этой даты сделка считается «предстоящей» и помечается
+        горящим маркером в каталоге, если стартует в ближайшие 7 дней.
       - date_end (Date, optional) — конкретная дата окончания приёма инвестиций.
         Если указана, все инвестиции действуют до этой даты.
       - investment_term_months (Integer, optional) — срок инвестиции в месяцах.
-        Если указан, каждая инвестиция действует N месяцев от даты вложения.
-      - Можно указать оба или одно из них.
-
-    НЕТ date_start — каждый инвестор вкладывает в произвольный день,
-    и date_start хранится на уровне Investment.
+        Если указан, каждая инвестиция действует N месяцев от даты старта.
     """
     __tablename__ = 'deals'
 
@@ -69,8 +69,8 @@ class Deal(db.Model):
     expected_profit_pct = db.Column(db.Float, default=0)
     investment_term_months = db.Column(db.Integer, nullable=True)  # optional term in months
     investment_term_days = db.Column(db.Integer, nullable=True)    # optional term in days
+    date_start = db.Column(db.Date, nullable=True, index=True)  # optional fixed start date
     date_end = db.Column(db.Date, nullable=True)  # optional fixed end date
-    # date_start removed — it lives on Investment now
     min_investment = db.Column(db.Float, default=0)
     risk_level = db.Column(db.String(20), default='medium', index=True)
     total_pool = db.Column(db.Float, default=0)
@@ -120,11 +120,17 @@ class Deal(db.Model):
     def remaining(self):
         return max(self.total_pool - self.collected_amount, 0)
 
+    HOT_THRESHOLD_DAYS = 7  # сделка помечается «горящей», если стартует в ближайшие N дней
+
     @property
     def term_display(self):
         """Human-readable term info for the deal (announcement level)."""
         parts = []
-        if self.date_end:
+        if self.date_start and self.date_end:
+            parts.append(f"{self.date_start.strftime('%d.%m.%Y')} — {self.date_end.strftime('%d.%m.%Y')}")
+        elif self.date_start:
+            parts.append(f"с {self.date_start.strftime('%d.%m.%Y')}")
+        elif self.date_end:
             parts.append(f"до {self.date_end.strftime('%d.%m.%Y')}")
         if self.investment_term_months:
             parts.append(f"{self.investment_term_months} мес.")
@@ -133,6 +139,26 @@ class Deal(db.Model):
         if parts:
             return ' / '.join(parts)
         return 'Бессрочно'
+
+    @property
+    def has_started(self):
+        """Стартовала ли сделка (если задана date_start)."""
+        if self.date_start:
+            return self.date_start <= date.today()
+        return True  # без фиксированного старта — считаем активной с момента создания
+
+    @property
+    def days_until_start(self):
+        """Дней до старта (None — если уже стартовала или дата не задана)."""
+        if self.date_start and self.date_start > date.today():
+            return (self.date_start - date.today()).days
+        return None
+
+    @property
+    def is_starting_soon(self):
+        """Сделка скоро стартует — помечаем горящей в каталоге."""
+        d = self.days_until_start
+        return d is not None and d <= self.HOT_THRESHOLD_DAYS
 
     @property
     def term_months_for_calc(self):
@@ -148,13 +174,14 @@ class Deal(db.Model):
 
     @property
     def term_days_for_calc(self):
-        """Term in days for calculator."""
+        """Term in days for calculator. Use date_start as base if it's in the future."""
+        base = self.date_start if (self.date_start and self.date_start > date.today()) else date.today()
         if self.investment_term_days:
             return self.investment_term_days
         if self.investment_term_months:
             return self.investment_term_months * 30
         if self.date_end:
-            delta = (self.date_end - date.today()).days
+            delta = (self.date_end - base).days
             return max(delta, 1)
         return 365  # fallback
 
@@ -207,6 +234,9 @@ class Investment(db.Model):
     # Investment-level dates
     date_start = db.Column(db.Date, nullable=True)
     date_end = db.Column(db.Date, nullable=True)
+
+    # Если admin вручную задал ожидаемую прибыль — pro-rata пересчёт её не перезаписывает
+    expected_profit_manual = db.Column(db.Boolean, default=False, nullable=False)
 
     transactions = db.relationship('Transaction', backref='investment', lazy='dynamic')
 

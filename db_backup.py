@@ -1,5 +1,5 @@
 """
-Снапшоты (бэкапы) SQLite базы данных InvestPlatform.
+Снапшоты (бэкапы) SQLite базы данных Группы Титан.
 
 Использование:
   - Из кода:     from db_backup import create_snapshot, list_snapshots, restore_snapshot

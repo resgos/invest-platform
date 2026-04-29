@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}СУБД и Telegram — InvestPlatform{% endblock %}
+{% block title %}СУБД и Telegram — Группа Титан{% endblock %}
 {% block content %}
 <section class="dashboard-section">
   <div class="container">
@@ -74,7 +74,7 @@
                 <td>{{ t.rows }}</td>
                 <td>
                   {% for c in t.columns %}
-                  <span class="badge" style="background:rgba(99,102,241,0.15);color:var(--accent-light);margin:1px;font-size:0.7rem;font-weight:400">
+                  <span class="badge" style="background:rgba(var(--accent-rgb),0.15);color:var(--accent-light);margin:1px;font-size:0.7rem;font-weight:400">
                     {{ c.name }}{% if c.pk %} <i class="fas fa-key" style="font-size:0.6rem;color:#ffc107"></i>{% endif %}
                     <span style="color:var(--text-muted);font-size:0.6rem">{{ c.type }}</span>
                   </span>
@@ -90,7 +90,7 @@
       <!-- Connection info -->
       <details style="margin-top:16px">
         <summary style="color:var(--accent-light);cursor:pointer;font-weight:600;font-size:0.9rem"><i class="fas fa-plug me-2"></i>Как подключиться к БД</summary>
-        <div class="mt-3" style="background:rgba(99,102,241,0.05);border-radius:8px;padding:16px">
+        <div class="mt-3" style="background:rgba(var(--accent-rgb),0.05);border-radius:8px;padding:16px">
           <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px">
             SQLite — файловая СУБД. БД — это один файл: <code>instance/invest.db</code>.
             Для подключения не нужен сервер или пароль.
@@ -98,7 +98,7 @@
           <div style="margin-bottom:12px">
             <p style="color:#fff;font-weight:600;font-size:0.85rem;margin-bottom:4px"><i class="fas fa-terminal me-2"></i>Командная строка (на сервере)</p>
             <code style="display:block;background:rgba(0,0,0,0.3);padding:10px;border-radius:6px;font-size:0.8rem;color:#e2e8f0">
-              cd ~/investplatform<br>
+              cd ~/gruppa-titan<br>
               sqlite3 instance/invest.db<br>
               <span style="color:var(--text-muted)"># Далее SQL-запросы, например:</span><br>
               .tables<br>
@@ -111,7 +111,7 @@
             <p style="color:var(--text-muted);font-size:0.8rem;margin:0">
               Скачайте <a href="https://sqlitebrowser.org/" target="_blank" class="accent-link">sqlitebrowser.org</a>.<br>
               Скопируйте <code>instance/invest.db</code> на локальный ПК через SCP:<br>
-              <code style="background:rgba(0,0,0,0.3);padding:4px 8px;border-radius:4px;font-size:0.78rem">scp deploy@ВАШ_IP:~/investplatform/instance/invest.db ./invest.db</code><br>
+              <code style="background:rgba(0,0,0,0.3);padding:4px 8px;border-radius:4px;font-size:0.78rem">scp deploy@ВАШ_IP:~/gruppa-titan/instance/invest.db ./invest.db</code><br>
               Откройте файл в DB Browser.
             </p>
           </div>
@@ -162,11 +162,11 @@
               <td>
                 <div class="d-flex gap-1 flex-wrap">
                   <a href="{{ url_for('admin_download_backup', filename=s.filename) }}" class="btn btn-sm btn-outline-accent" title="Скачать"><i class="fas fa-download"></i></a>
-                  <form method="POST" action="{{ url_for('admin_restore_backup', filename=s.filename) }}" class="d-inline" onsubmit="return confirm('Восстановить БД из {{ s.filename }}? Текущее состояние будет сохранено автоматически.')">
+                  <form method="POST" action="{{ url_for('admin_restore_backup', filename=s.filename) }}" class="d-inline" data-confirm='Восстановить БД из {{ s.filename }}? Текущее состояние будет сохранено автоматически.'>
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-outline-accent" title="Восстановить"><i class="fas fa-undo"></i></button>
                   </form>
-                  <form method="POST" action="{{ url_for('admin_delete_backup', filename=s.filename) }}" class="d-inline" onsubmit="return confirm('Удалить снапшот {{ s.filename }}?')">
+                  <form method="POST" action="{{ url_for('admin_delete_backup', filename=s.filename) }}" class="d-inline" data-confirm='Удалить снапшот {{ s.filename }}?'>
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-outline-danger" title="Удалить"><i class="fas fa-trash"></i></button>
                   </form>
@@ -194,7 +194,7 @@
       <code style="display:block;background:rgba(0,0,0,0.3);padding:12px;border-radius:6px;font-size:0.8rem;color:#e2e8f0">
         <span style="color:var(--text-muted)"># Ежедневно в 3:00 ночи</span><br>
         crontab -e<br>
-        0 3 * * * cd /home/deploy/investplatform && /home/deploy/investplatform/venv/bin/python db_backup.py create
+        0 3 * * * cd /home/deploy/gruppa-titan && /home/deploy/gruppa-titan/venv/bin/python db_backup.py create
       </code>
     </div>
   </div>

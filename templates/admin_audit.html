@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Журнал аудита — InvestPlatform{% endblock %}
+{% block title %}Журнал аудита — Группа Титан{% endblock %}
 {% block content %}
 <section class="dashboard-section">
   <div class="container">
@@ -21,7 +21,7 @@
                 {% elif 'login_failed' in log.action %}<span class="badge" style="background:rgba(239,68,68,0.2);color:#ef4444">Неудач. вход</span>
                 {% elif 'login_blocked' in log.action %}<span class="badge" style="background:rgba(239,68,68,0.3);color:#ef4444">Блокировка</span>
                 {% elif 'created' in log.action %}<span class="badge" style="background:rgba(16,185,129,0.2);color:#10b981">Создание</span>
-                {% elif 'updated' in log.action %}<span class="badge" style="background:rgba(99,102,241,0.2);color:var(--accent-light)">Изменение</span>
+                {% elif 'updated' in log.action %}<span class="badge" style="background:rgba(var(--accent-rgb),0.2);color:var(--accent-light)">Изменение</span>
                 {% elif 'deleted' in log.action %}<span class="badge" style="background:rgba(239,68,68,0.2);color:#ef4444">Удаление</span>
                 {% elif 'toggled' in log.action %}<span class="badge" style="background:rgba(245,158,11,0.2);color:#f59e0b">Переключение</span>
                 {% else %}<span class="badge bg-secondary">{{ log.action }}</span>{% endif %}

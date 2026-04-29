@@ -19,6 +19,7 @@ class Config:
     # Session security
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = 'Lax'
+    SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'false').lower() in ('true', '1', 'yes')
     PERMANENT_SESSION_LIFETIME = 3600  # 1 hour
 
     # Security
@@ -32,7 +33,7 @@ class Config:
     # Admin defaults
     ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
     ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'Admin@Secure2026!')
-    ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', 'admin@investplatform.ru')
+    ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', 'admin@gruppa-titan.ru')
 
     # Telegram notifications
     TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
@@ -40,3 +41,9 @@ class Config:
     # Прокси для Telegram (в РФ API заблокировано)
     # Форматы: http://user:pass@host:port, socks5://user:pass@host:port
     TELEGRAM_PROXY = os.getenv('TELEGRAM_PROXY', '')
+
+    # Rate limiter storage (Redis для multi-worker prod, иначе in-memory)
+    RATE_LIMIT_STORAGE_URI = os.getenv('RATE_LIMIT_STORAGE_URI', 'memory://')
+
+    # Деплой / бэкапы
+    DEPLOY_DIR = os.getenv('DEPLOY_DIR', 'gruppa-titan')

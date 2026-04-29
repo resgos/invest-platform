@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Новое предложение — InvestPlatform{% endblock %}
+{% block title %}Новое предложение — Группа Титан{% endblock %}
 {% block content %}
 <section class="dashboard-section">
   <div class="container" style="max-width:900px">
@@ -68,22 +68,27 @@
         <!-- Term settings -->
         <div id="investment-term-section">
         <h5 style="color:#fff" class="mb-3"><i class="fas fa-calendar-alt me-2"></i>Срок инвестиций</h5>
-        <div class="alert glass-alert mb-3" style="border-color:rgba(99,102,241,0.3)">
+        <div class="alert glass-alert mb-3" style="border-color:rgba(var(--accent-rgb),0.3)">
           <small><i class="fas fa-info-circle me-1" style="color:var(--accent-light)"></i>
-          Укажите один или несколько вариантов. <b>Дата окончания</b> — все инвестиции до этой даты. <b>Срок в месяцах/днях</b> — каждая инвестиция действует от момента вложения. Если несколько — берётся более ранний срок.</small>
+          <b>Дата старта</b> — фиксированная дата начала сделки. Если до старта ≤ 7 дней — в каталоге появится метка «🔥 Скоро старт». <b>Дата окончания</b> — все инвестиции до этой даты. <b>Срок в мес./дн.</b> отсчитывается от даты старта (или от даты вложения, если старт не задан). Если задано несколько ограничений — берётся более ранний срок.</small>
         </div>
         <div class="row g-3 mb-4">
-          <div class="col-md-4">
+          <div class="col-md-3">
+            <label class="form-label">Дата старта <small class="text-muted">(необяз.)</small></label>
+            {{ form.date_start(class="form-control", type="date") }}
+            {% for err in form.date_start.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+          </div>
+          <div class="col-md-3">
             <label class="form-label">Дата окончания <small class="text-muted">(необяз.)</small></label>
             {{ form.date_end(class="form-control", type="date") }}
             {% for err in form.date_end.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label">Срок, мес. <small class="text-muted">(необяз.)</small></label>
             {{ form.investment_term_months(class="form-control", placeholder="12") }}
             {% for err in form.investment_term_months.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label">Срок, дн. <small class="text-muted">(необяз.)</small></label>
             {{ form.investment_term_days(class="form-control", placeholder="90") }}
             {% for err in form.investment_term_days.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
@@ -161,30 +166,5 @@
 </section>
 {% endblock %}
 {% block scripts %}
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const cat = document.getElementById('categorySelect');
-    const vis = document.getElementById('visibilitySelect');
-    const dealType = document.getElementById('dealTypeSelect');
-
-    function toggleFields() {
-        document.getElementById('realestate-fields').style.display = cat.value === 'realestate' ? '' : 'none';
-        document.getElementById('auto-fields').style.display = cat.value === 'auto' ? '' : 'none';
-    }
-    function toggleInvestors() {
-        document.getElementById('investorSelector').style.display = vis.value === 'selected' ? '' : 'none';
-    }
-    function toggleDealType() {
-        const isUrgent = dealType.value === 'urgent_sale';
-        document.querySelectorAll('.investment-only-field').forEach(el => el.style.display = isUrgent ? 'none' : '');
-        document.getElementById('investment-term-section').style.display = isUrgent ? 'none' : '';
-    }
-    cat.addEventListener('change', toggleFields);
-    vis.addEventListener('change', toggleInvestors);
-    dealType.addEventListener('change', toggleDealType);
-    toggleFields();
-    toggleInvestors();
-    toggleDealType();
-});
-</script>
+{# Условные блоки формы обрабатываются в static/js/script.js (категория/видимость/тип сделки) #}
 {% endblock %}

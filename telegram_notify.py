@@ -236,6 +236,43 @@ def notify_investment_status(app, investor_name, deal_title, amount, status, adm
     send_async(bot_token, chat_id, text, proxy_url=proxy_url)
 
 
+def format_upcoming_deal_notification(deal_title, days_until, date_start_str,
+                                       deal_profit_pct, deal_category, min_investment, total_pool):
+    """Форматирует уведомление о приближающемся старте сделки."""
+    cat_label = CATEGORY_LABELS.get(deal_category, deal_category)
+    if days_until == 0:
+        when = 'Сегодня'
+    elif days_until == 1:
+        when = 'Завтра'
+    else:
+        when = f'Через {days_until} дн.'
+    return (
+        f'🔥 <b>Сделка скоро стартует</b>\n'
+        f'━━━━━━━━━━━━━━━━━━━━━\n'
+        f'📋 <b>{deal_title}</b>\n'
+        f'📁 Категория: {cat_label}\n'
+        f'📅 Старт: <b>{date_start_str}</b> ({when})\n'
+        f'📈 Доходность: <b>+{deal_profit_pct}% годовых</b>\n'
+        f'💵 Мин. вход: <b>{min_investment:,.0f} ₽</b>\n'
+        f'🎯 Пул: <b>{total_pool:,.0f} ₽</b>\n'
+    ).replace(',', ' ')
+
+
+def notify_upcoming_deal(app, deal_title, days_until, date_start_str,
+                         deal_profit_pct, deal_category, min_investment, total_pool):
+    """Уведомляет в Telegram о приближающемся старте сделки."""
+    bot_token = app.config.get('TELEGRAM_BOT_TOKEN', '')
+    chat_id = app.config.get('TELEGRAM_CHAT_ID', '')
+    proxy_url = app.config.get('TELEGRAM_PROXY', '')
+    if not bot_token or not chat_id:
+        return
+    text = format_upcoming_deal_notification(
+        deal_title, days_until, date_start_str,
+        deal_profit_pct, deal_category, min_investment, total_pool
+    )
+    send_async(bot_token, chat_id, text, proxy_url=proxy_url)
+
+
 def test_connection(bot_token, proxy_url=None):
     """Тест подключения к Telegram API. Возвращает (ok, info_str)."""
     if not bot_token:
