@@ -116,7 +116,7 @@
         {% set accepting = ad.status == 'active' and ad.remaining > 0 and not ad.is_expired and not ad.has_started %}
         <div class="glass-card calculator-card">
           <h5 style="color:#fff" class="mb-3"><i class="fas fa-calculator me-2"></i>Калькулятор доходности</h5>
-          {% if ad.has_started %}
+          {% if ad.has_started and ad.date_start %}
           <div class="alert glass-alert mb-3" style="border-color:rgba(var(--accent-rgb),0.3);font-size:0.85rem">
             <i class="fas fa-lock me-1" style="color:var(--accent-light)"></i>
             Приём заявок завершён <b>{{ ad.date_start.strftime('%d.%m.%Y') }}</b>. Сделка уже в работе. Калькулятор оставлен для справки.
