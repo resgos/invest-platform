@@ -169,20 +169,26 @@ def create_app():
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
     # ──── DB init ────
+    # Под gunicorn 3 воркера форкаются параллельно и каждый выполняет этот блок —
+    # без try/except это даёт UNIQUE-конфликт по email/username при первом запуске.
     with app.app_context():
         db.create_all()
-        # Ensure admin exists
-        admin = User.query.filter_by(username=app.config['ADMIN_USERNAME']).first()
-        if not admin:
-            admin = User(
-                username=app.config['ADMIN_USERNAME'],
-                email=app.config['ADMIN_EMAIL'],
-                password_hash=hash_password(app.config['ADMIN_PASSWORD']),
-                full_name='Администратор',
-                role='admin'
-            )
-            db.session.add(admin)
-            db.session.commit()
+        try:
+            admin = User.query.filter_by(username=app.config['ADMIN_USERNAME']).first()
+            if not admin:
+                admin = User(
+                    username=app.config['ADMIN_USERNAME'],
+                    email=app.config['ADMIN_EMAIL'],
+                    password_hash=hash_password(app.config['ADMIN_PASSWORD']),
+                    full_name='Администратор',
+                    role='admin'
+                )
+                db.session.add(admin)
+                db.session.commit()
+        except Exception as e:
+            # Другой воркер уже создал админа — безопасно игнорируем
+            db.session.rollback()
+            app.logger.info(f'Admin init: пропущено ({e.__class__.__name__})')
 
     # ════════════════════════════════════════════
     #  AUTH ROUTES
