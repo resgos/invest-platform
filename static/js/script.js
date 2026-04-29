@@ -107,6 +107,26 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const fmtRub = (n) => n.toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' ₽';
 
+        // Человекочитаемый срок: дни / месяцы с округлением до 0.5
+        function humanTerm(days) {
+            if (days < 30) {
+                return days + ' ' + pluralRu(days, ['день', 'дня', 'дней']);
+            }
+            const months = days / 30;
+            // Округляем до 0.5
+            const rounded = Math.round(months * 2) / 2;
+            const monthsStr = (rounded % 1 === 0) ? rounded.toFixed(0) : rounded.toFixed(1).replace('.', ',');
+            return '~' + monthsStr + ' ' + pluralRu(Math.round(rounded), ['месяц', 'месяца', 'месяцев']);
+        }
+        function pluralRu(n, forms) {
+            const abs = Math.abs(n) % 100;
+            const n1 = abs % 10;
+            if (abs > 10 && abs < 20) return forms[2];
+            if (n1 > 1 && n1 < 5) return forms[1];
+            if (n1 === 1) return forms[0];
+            return forms[2];
+        }
+
         function calcTerm() {
             const today = new Date(); today.setHours(0, 0, 0, 0);
             const baseDate = (dealStart && new Date(dealStart + 'T00:00:00') > today)
@@ -117,10 +137,10 @@ document.addEventListener('DOMContentLoaded', function () {
             const customDays = customDaysEl ? parseInt(customDaysEl.value, 10) : NaN;
             if (customDays && customDays > 0) {
                 const endDate = new Date(baseDate); endDate.setDate(endDate.getDate() + customDays);
-                const months = Math.max(Math.round(customDays / 30), 1);
+                const months = Math.max(customDays / 30, 1 / 30);
                 return {
                     months, days: customDays, openEnded: false, custom: true,
-                    termText: baseDate.toLocaleDateString('ru-RU') + ' + ' + customDays + ' дн. (' + months + ' мес.)'
+                    termText: baseDate.toLocaleDateString('ru-RU') + ' + ' + customDays + ' дн. (' + humanTerm(customDays) + ')'
                 };
             }
 
@@ -139,12 +159,12 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             const endDate = candidates.reduce((a, b) => a < b ? a : b);
             const diffDays = Math.max(Math.round((endDate - baseDate) / 86400000), 1);
-            const months = Math.max(Math.round(diffDays / 30), 1);
+            const months = Math.max(diffDays / 30, 1 / 30);
             const startStr = baseDate.toLocaleDateString('ru-RU');
             const endStr = endDate.toLocaleDateString('ru-RU');
             return {
                 months, days: diffDays, openEnded: false, custom: false,
-                termText: startStr + ' — ' + endStr + ' (' + diffDays + ' дн. / ' + months + ' мес.)'
+                termText: startStr + ' — ' + endStr + ' (' + diffDays + ' дн. / ' + humanTerm(diffDays) + ')'
             };
         }
 
@@ -164,7 +184,12 @@ document.addEventListener('DOMContentLoaded', function () {
             const profit = a * pct / 100 * (t.days / 365);
             setText('calcTerm', t.termText);
             setText('calcProfit', fmtRub(profit));
-            setText('calcMonthly', fmtRub(t.months > 0 ? profit / t.months : 0));
+            // Если срок меньше месяца — не показываем месячную экстраполяцию
+            if (t.days < 30) {
+                setText('calcMonthly', '—');
+            } else {
+                setText('calcMonthly', fmtRub(t.months > 0 ? profit / t.months : 0));
+            }
             setText('calcDaily', fmtRub(t.days > 0 ? profit / t.days : 0));
             setText('calcTotal', fmtRub(a + profit));
         }
