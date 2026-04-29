@@ -110,7 +110,7 @@ document.addEventListener('DOMContentLoaded', function () {
         // Человекочитаемый срок: дни / месяцы с округлением до 0.5
         function humanTerm(days) {
             if (days < 30) {
-                return days + ' ' + pluralRu(days, ['день', 'дня', 'дней']);
+                return days + ' ' + pluralRu(days, ['день', 'дня', 'дней']) + ' (<1 месяца)';
             }
             const months = days / 30;
             // Округляем до 0.5
