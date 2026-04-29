@@ -39,7 +39,13 @@
 
         <h5 style="color:#fff" class="mb-3"><i class="fas fa-ruble-sign me-2"></i>Финансовые параметры</h5>
         <div class="row g-3 mb-4">
-          <div class="col-md-4"><label class="form-label">Стоимость актива (₽)</label>{{ form.price(class="form-control") }}</div>
+          <div class="col-md-4"><label class="form-label">Сумма займа (₽)</label>{{ form.price(class="form-control", id="price_input") }}</div>
+          <div class="col-md-4">
+            <label class="form-label">Рыночная стоимость (₽)</label>
+            {{ form.market_value(class="form-control", id="market_value_input") }}
+            {% for err in form.market_value.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+            <small class="text-muted-light">КЗ: <span id="loan_ratio_preview" style="font-weight:600">—</span></small>
+          </div>
           <div class="col-md-4 investment-only-field"><label class="form-label">Доходность (%)</label>{{ form.expected_profit_pct(class="form-control") }}</div>
           <div class="col-md-4 investment-only-field"><label class="form-label">Мин. инвестиция (₽)</label>{{ form.min_investment(class="form-control") }}</div>
           <div class="col-md-4 investment-only-field"><label class="form-label">Общий пул (₽)</label>{{ form.total_pool(class="form-control") }}</div>
@@ -158,4 +164,31 @@
 {% endblock %}
 {% block scripts %}
 {# Условные блоки формы обрабатываются в static/js/script.js #}
+<script>
+(function(){
+    const priceEl = document.getElementById('price_input');
+    const mvEl = document.getElementById('market_value_input');
+    const out = document.getElementById('loan_ratio_preview');
+    if (!priceEl || !mvEl || !out) return;
+    function recalc(){
+        const p = parseFloat(priceEl.value) || 0;
+        const m = parseFloat(mvEl.value) || 0;
+        if (p > 0 && m > 0) {
+            const ratio = (p / m * 100);
+            const ratioStr = ratio.toFixed(1).replace('.', ',') + '%';
+            let color = '#22c55e';
+            if (ratio > 70) color = '#ef4444';
+            else if (ratio > 50) color = '#f59e0b';
+            out.textContent = ratioStr;
+            out.style.color = color;
+        } else {
+            out.textContent = '—';
+            out.style.color = '';
+        }
+    }
+    priceEl.addEventListener('input', recalc);
+    mvEl.addEventListener('input', recalc);
+    recalc();
+})();
+</script>
 {% endblock %}

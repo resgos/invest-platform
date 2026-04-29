@@ -95,9 +95,15 @@
             <div class="profit-row">
               {% if ad.is_urgent_sale %}
               <div class="profit-item"><span class="profit-label">Цена</span><span class="profit-value" style="color:#f59e0b;font-weight:700">{{ "{:,.0f}".format(ad.price).replace(",", " ") }} ₽</span></div>
+              {% if ad.loan_ratio is not none %}
+              <div class="profit-item"><span class="profit-label" title="Коэффициент займа">КЗ</span><span class="profit-value {{ ad.loan_ratio_class }}" style="font-weight:700">{{ ('%.1f'|format(ad.loan_ratio)).replace('.', ',') }}%</span></div>
+              {% endif %}
               {% else %}
               <div class="profit-item"><span class="profit-label">Доходность</span><span class="profit-value text-profit">+{{ ad.expected_profit_pct }}%</span></div>
               <div class="profit-item"><span class="profit-label">Мин. вход</span><span class="profit-value">{{ "{:,.0f}".format(ad.min_investment).replace(",", " ") }} ₽</span></div>
+              {% if ad.loan_ratio is not none %}
+              <div class="profit-item"><span class="profit-label" title="Коэффициент займа — сумма займа / рыночная стоимость">КЗ</span><span class="profit-value {{ ad.loan_ratio_class }}" style="font-weight:700">{{ ('%.1f'|format(ad.loan_ratio)).replace('.', ',') }}%</span></div>
+              {% endif %}
               {% endif %}
             </div>
             {% if ad.days_remaining is not none and not ad.is_expired %}

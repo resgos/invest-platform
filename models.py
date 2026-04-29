@@ -65,7 +65,8 @@ class Deal(db.Model):
     category = db.Column(db.String(50), nullable=False, index=True)
     subcategory = db.Column(db.String(100))
 
-    price = db.Column(db.Float, nullable=False)
+    price = db.Column(db.Float, nullable=False)  # Сумма займа (ранее — стоимость актива)
+    market_value = db.Column(db.Float, nullable=True)  # Рыночная стоимость объекта (для расчёта КЗ)
     expected_profit_pct = db.Column(db.Float, default=0)
     investment_term_months = db.Column(db.Integer, nullable=True)  # optional term in months
     investment_term_days = db.Column(db.Integer, nullable=True)    # optional term in days
@@ -109,6 +110,25 @@ class Deal(db.Model):
     @property
     def is_urgent_sale(self):
         return self.deal_type == 'urgent_sale'
+
+    @property
+    def loan_ratio(self):
+        """Коэффициент займа — % от рыночной стоимости. None если рыночная не указана."""
+        if not self.market_value or self.market_value <= 0:
+            return None
+        return round(self.price / self.market_value * 100, 1)
+
+    @property
+    def loan_ratio_class(self):
+        """CSS-класс для отображения КЗ: зеленый до 50%, жёлтый 50-70%, красный выше."""
+        ratio = self.loan_ratio
+        if ratio is None:
+            return ''
+        if ratio <= 50:
+            return 'text-profit'  # зелёный
+        if ratio <= 70:
+            return 'text-warning'  # жёлтый
+        return 'text-danger'  # красный
 
     @property
     def pool_pct(self):

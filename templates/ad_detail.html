@@ -65,7 +65,13 @@
         <div class="glass-card invest-sidebar mb-4">
           <h5 style="color:#fff" class="mb-3"><i class="fas fa-bolt me-2" style="color:#f59e0b"></i>Срочная продажа</h5>
           <div class="invest-params">
-            <div class="invest-param-row"><span>Стоимость</span><span style="color:#f59e0b;font-weight:700;font-size:1.2rem">{{ "{:,.0f}".format(ad.price).replace(",", " ") }} ₽</span></div>
+            <div class="invest-param-row"><span>Цена</span><span style="color:#f59e0b;font-weight:700;font-size:1.2rem">{{ "{:,.0f}".format(ad.price).replace(",", " ") }} ₽</span></div>
+            {% if ad.market_value %}
+            <div class="invest-param-row"><span>Рыночная стоимость</span><span style="color:#fff">{{ "{:,.0f}".format(ad.market_value).replace(",", " ") }} ₽</span></div>
+            {% if ad.loan_ratio is not none %}
+            <div class="invest-param-row"><span title="Коэффициент займа — отношение суммы к рыночной стоимости">КЗ (коэф. займа)</span><span class="{{ ad.loan_ratio_class }}" style="font-weight:700">{{ ('%.1f'|format(ad.loan_ratio)).replace('.', ',') }}%</span></div>
+            {% endif %}
+            {% endif %}
             <div class="invest-param-row"><span>Категория</span><span style="color:#fff">{{ {'realestate':'Недвижимость','auto':'Авто','business':'Бизнес','equipment':'Оборудование','other':'Другое'}.get(ad.category, ad.category) }}</span></div>
             {% if ad.date_end %}
             <div class="invest-param-row"><span>Действует до</span><span style="color:{% if ad.is_expired %}var(--danger-color){% else %}#fff{% endif %}">{{ ad.date_end.strftime('%d.%m.%Y') }}{% if ad.is_expired %} (истекло){% endif %}</span></div>
@@ -86,7 +92,13 @@
         <div class="glass-card invest-sidebar mb-4">
           <h5 style="color:#fff" class="mb-3">Инвестиционные параметры</h5>
           <div class="invest-params">
-            <div class="invest-param-row"><span>Стоимость актива</span><span style="color:#fff; font-weight:600">{{ "{:,.0f}".format(ad.price).replace(",", " ") }} ₽</span></div>
+            <div class="invest-param-row"><span>Сумма займа</span><span style="color:#fff; font-weight:600">{{ "{:,.0f}".format(ad.price).replace(",", " ") }} ₽</span></div>
+            {% if ad.market_value %}
+            <div class="invest-param-row"><span>Рыночная стоимость</span><span style="color:#fff">{{ "{:,.0f}".format(ad.market_value).replace(",", " ") }} ₽</span></div>
+            {% if ad.loan_ratio is not none %}
+            <div class="invest-param-row"><span title="Коэффициент займа — отношение суммы займа к рыночной стоимости">КЗ (коэф. займа)</span><span class="{{ ad.loan_ratio_class }}" style="font-weight:700">{{ ('%.1f'|format(ad.loan_ratio)).replace('.', ',') }}%</span></div>
+            {% endif %}
+            {% endif %}
             <div class="invest-param-row"><span>Доходность</span><span class="text-profit" style="font-weight:600">+{{ ad.expected_profit_pct }}% годовых</span></div>
             {% if ad.date_end or ad.investment_term_months or ad.investment_term_days %}
             <div class="invest-param-row"><span>Ожидаемая прибыль</span><span class="text-profit" style="font-weight:600">+{{ "{:,.0f}".format(ad.price * ad.expected_profit_pct / 100 * ad.term_days_for_calc / 365).replace(",", " ") }} ₽</span></div>

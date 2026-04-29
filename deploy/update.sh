@@ -2,12 +2,20 @@
 # ============================================================
 #  Обновление кода: git pull + миграции + рестарт.
 #  Запускать на сервере под root: sudo bash deploy/update.sh
-#  (или: sudo bash /home/deploy/gruppa-titan/deploy/update.sh)
+#
+#  Переопределить параметры можно через переменные окружения:
+#    sudo APP_DIR=/home/deploy/investplatform \
+#         SERVICE_NAME=investplatform \
+#         NGINX_SITE=investplatform \
+#         bash deploy/update.sh
 # ============================================================
 set -euo pipefail
 
 DEPLOY_USER="${DEPLOY_USER:-deploy}"
 APP_DIR="${APP_DIR:-/home/${DEPLOY_USER}/gruppa-titan}"
+SERVICE_NAME="${SERVICE_NAME:-gruppa-titan}"
+NGINX_SITE="${NGINX_SITE:-${SERVICE_NAME}}"
+SERVICE_FILE="${SERVICE_FILE:-${SERVICE_NAME}.service}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 
 G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[0;34m'; N='\033[0m'
@@ -26,6 +34,15 @@ if [[ ! -d "$APP_DIR/.git" ]]; then
     exit 1
 fi
 
+if ! systemctl list-unit-files | grep -q "^${SERVICE_FILE}"; then
+    err "systemd-сервис ${SERVICE_FILE} не найден."
+    err "Передайте корректное имя через SERVICE_NAME=<имя> bash $0"
+    exit 1
+fi
+
+# 0. Фикс git dubious ownership (на случай разных владельцев)
+git config --global --add safe.directory "$APP_DIR" || true
+
 # 1. Снапшот БД на всякий случай
 info "Снапшот БД..."
 sudo -u "$DEPLOY_USER" "$APP_DIR/venv/bin/python" "$APP_DIR/db_backup.py" create -l "pre-update-$(date +%Y%m%d-%H%M%S)" || \
@@ -40,6 +57,11 @@ NEW_COMMIT=$(sudo -u "$DEPLOY_USER" git -C "$APP_DIR" rev-parse --short HEAD)
 
 if [[ "$OLD_COMMIT" == "$NEW_COMMIT" ]]; then
     ok "Уже на последнем коммите ($NEW_COMMIT) — нечего обновлять"
+    # Всё равно перезапустим сервис, если попросили (полезно для применения env)
+    if [[ "${FORCE_RESTART:-0}" == "1" ]]; then
+        info "FORCE_RESTART=1 — перезапускаем сервис принудительно"
+        systemctl restart "$SERVICE_NAME"
+    fi
     exit 0
 fi
 ok "$OLD_COMMIT → $NEW_COMMIT"
@@ -52,27 +74,35 @@ sudo -u "$DEPLOY_USER" "$APP_DIR/venv/bin/pip" install --quiet redis pysocks
 
 # 4. Миграции
 info "Миграции БД..."
-sudo -u "$DEPLOY_USER" bash -c "cd '$APP_DIR' && '$APP_DIR/venv/bin/python' migrate.py"
+if [[ -f "$APP_DIR/migrate.py" ]]; then
+    sudo -u "$DEPLOY_USER" bash -c "cd '$APP_DIR' && '$APP_DIR/venv/bin/python' migrate.py"
+else
+    warn "migrate.py не найден — пропускаем"
+fi
 
 # 5. Перезапуск + обновление nginx-конфига если изменился
-if ! cmp -s "$APP_DIR/deploy/nginx.conf" /etc/nginx/sites-available/gruppa-titan; then
+NGINX_TARGET="/etc/nginx/sites-available/${NGINX_SITE}"
+if [[ -f "$APP_DIR/deploy/nginx.conf" ]] && [[ -f "$NGINX_TARGET" ]] && ! cmp -s "$APP_DIR/deploy/nginx.conf" "$NGINX_TARGET"; then
     info "nginx.conf изменился — обновляем"
-    cp "$APP_DIR/deploy/nginx.conf" /etc/nginx/sites-available/gruppa-titan
+    cp "$APP_DIR/deploy/nginx.conf" "$NGINX_TARGET"
     nginx -t && systemctl reload nginx
 fi
-if ! cmp -s "$APP_DIR/deploy/gruppa-titan.service" /etc/systemd/system/gruppa-titan.service; then
+
+SERVICE_TARGET="/etc/systemd/system/${SERVICE_FILE}"
+SERVICE_SOURCE="$APP_DIR/deploy/${SERVICE_FILE}"
+if [[ -f "$SERVICE_SOURCE" ]] && [[ -f "$SERVICE_TARGET" ]] && ! cmp -s "$SERVICE_SOURCE" "$SERVICE_TARGET"; then
     info "systemd unit изменился — обновляем"
-    cp "$APP_DIR/deploy/gruppa-titan.service" /etc/systemd/system/
+    cp "$SERVICE_SOURCE" "$SERVICE_TARGET"
     systemctl daemon-reload
 fi
 
-info "Перезапуск сервиса..."
-systemctl restart gruppa-titan
+info "Перезапуск сервиса ${SERVICE_NAME}..."
+systemctl restart "$SERVICE_NAME"
 sleep 2
-if systemctl is-active --quiet gruppa-titan; then
+if systemctl is-active --quiet "$SERVICE_NAME"; then
     ok "Обновление завершено: $OLD_COMMIT → $NEW_COMMIT, сервис работает"
 else
     err "Сервис не стартовал — откатитесь по бэкапу из админки"
-    journalctl -u gruppa-titan -n 30
+    journalctl -u "$SERVICE_NAME" -n 30
     exit 1
 fi

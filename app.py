@@ -858,6 +858,7 @@ def create_app():
                 category=form.category.data,
                 subcategory=form.subcategory.data.strip() if form.subcategory.data else None,
                 price=form.price.data,
+                market_value=form.market_value.data if form.market_value.data else None,
                 expected_profit_pct=0 if is_urgent else (form.expected_profit_pct.data or 0),
                 date_start=form.date_start.data if form.date_start.data else None,
                 date_end=form.date_end.data if form.date_end.data else None,
@@ -922,6 +923,7 @@ def create_app():
             deal.category = form.category.data
             deal.subcategory = form.subcategory.data.strip() if form.subcategory.data else None
             deal.price = form.price.data
+            deal.market_value = form.market_value.data if form.market_value.data else None
             deal.expected_profit_pct = 0 if is_urgent else (form.expected_profit_pct.data or 0)
             deal.date_start = form.date_start.data if form.date_start.data else None
             deal.date_end = form.date_end.data if form.date_end.data else None

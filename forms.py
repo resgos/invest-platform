@@ -105,14 +105,22 @@ class DealForm(FlaskForm):
     ], validators=[DataRequired()])
     subcategory = StringField('Подкатегория', validators=[Optional(), Length(max=100)])
 
-    price = FloatField('Стоимость актива (руб.)', validators=[
-        DataRequired(message='Введите стоимость'),
+    price = FloatField('Сумма займа (руб.)', validators=[
+        DataRequired(message='Введите сумму займа'),
+        NumberRange(min=0, message='Должна быть >= 0')
+    ])
+    market_value = FloatField('Рыночная стоимость (руб.)', validators=[
+        Optional(),
         NumberRange(min=0, message='Должна быть >= 0')
     ])
     expected_profit_pct = FloatField('Ожидаемая доходность (%)', validators=[
         Optional(),
         NumberRange(min=0, max=1000)
     ])
+
+    def validate_market_value(self, field):
+        if field.data and self.price.data and field.data < self.price.data:
+            raise ValidationError('Рыночная стоимость должна быть не меньше суммы займа')
     date_start = DateField('Дата старта сделки', format='%Y-%m-%d', validators=[Optional()])
     date_end = DateField('Дата окончания приёма', format='%Y-%m-%d', validators=[Optional()])
     investment_term_months = IntegerField('Срок инвестиции (мес.)', validators=[

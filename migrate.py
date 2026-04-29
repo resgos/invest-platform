@@ -123,10 +123,19 @@ def m_003_investment_manual_profit(c: sqlite3.Cursor) -> None:
         )
 
 
+def m_004_deal_market_value(c: sqlite3.Cursor) -> None:
+    """Рыночная стоимость объекта (для расчёта КЗ — коэф. займа)."""
+    if not table_exists(c, 'deals'):
+        return
+    if not col_exists(c, 'deals', 'market_value'):
+        c.execute("ALTER TABLE deals ADD COLUMN market_value FLOAT")
+
+
 MIGRATIONS = [
     ('001_investment_dates', m_001_investment_dates),
     ('002_deal_date_start',  m_002_deal_date_start),
     ('003_investment_manual_profit', m_003_investment_manual_profit),
+    ('004_deal_market_value', m_004_deal_market_value),
 ]
 
 
