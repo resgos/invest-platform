@@ -57,8 +57,12 @@ def _get_proxy_opener(proxy_url):
     if proxy_url.startswith('socks5://') or proxy_url.startswith('socks5h://'):
         try:
             import socks
-            from urllib.request import HTTPSHandler
             import socket
+
+            # socks5h:// = remote DNS resolution через прокси (нужно когда сервер
+            # резолвит api.telegram.org в IPv6, а PySocks не поддерживает IPv6).
+            # socks5:// = локальный DNS — может вернуть IPv6 → краш PySocks.
+            remote_dns = proxy_url.startswith('socks5h://')
 
             # Parse socks proxy URL
             url_part = proxy_url.split('://', 1)[1]
@@ -79,11 +83,21 @@ def _get_proxy_opener(proxy_url):
 
             socks.set_default_proxy(
                 socks.SOCKS5, host, port,
+                rdns=remote_dns,  # remote DNS resolution
                 username=auth[0] if auth else None,
                 password=auth[1] if auth else None
             )
             socket.socket = socks.socksocket
-            logger.info(f'Telegram: SOCKS5-прокси активирован → {host}:{port}')
+
+            # Принудительно резолвим в IPv4 — PySocks 1.7.x не поддерживает IPv6.
+            # Без этого getaddrinfo может вернуть IPv6 для api.telegram.org и
+            # PySocks упадёт с «PySocks doesn't support IPv6».
+            _orig_getaddrinfo = socket.getaddrinfo
+            def _ipv4_only_getaddrinfo(host, port, family=0, *args, **kwargs):
+                return _orig_getaddrinfo(host, port, socket.AF_INET, *args, **kwargs)
+            socket.getaddrinfo = _ipv4_only_getaddrinfo
+
+            logger.info(f'Telegram: SOCKS5-прокси активирован → {host}:{port} (rdns={remote_dns}, IPv4-only)')
             return None  # socks monkeypatches socket globally, no opener needed
 
         except ImportError:
