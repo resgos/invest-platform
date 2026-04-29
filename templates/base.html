@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}InvestPlatform{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<nav class="navbar navbar-expand-lg">
+  <div class="container-fluid px-4">
+    <a class="navbar-brand" href="{{ url_for('index') }}"><i class="fas fa-chart-line me-2"></i>InvestPlatform</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav me-auto">
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('index') }}"><i class="fas fa-home me-1"></i>Главная</a></li>
+        {% if current_user.is_authenticated %}
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('catalog') }}"><i class="fas fa-briefcase me-1"></i>Каталог</a></li>
+        {% endif %}
+      </ul>
+      <ul class="navbar-nav">
+        {% if current_user.is_authenticated %}
+          {% if current_user.is_admin %}
+          <li class="nav-item"><a class="nav-link" href="{{ url_for('admin_dashboard') }}"><i class="fas fa-cog me-1"></i>Админ</a></li>
+          {% endif %}
+          <li class="nav-item"><a class="nav-link" href="{{ url_for('dashboard') }}"><i class="fas fa-user-circle me-1"></i>{{ current_user.full_name }}</a></li>
+          <li class="nav-item"><a class="nav-link" href="{{ url_for('logout') }}"><i class="fas fa-sign-out-alt me-1"></i>Выйти</a></li>
+        {% else %}
+          <li class="nav-item"><a class="nav-link btn-register-nav" href="{{ url_for('login') }}"><i class="fas fa-sign-in-alt me-1"></i>Войти</a></li>
+        {% endif %}
+      </ul>
+    </div>
+  </div>
+</nav>
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div class="container mt-3">
+  {% for category, message in messages %}
+  <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show glass-alert" role="alert">
+    {{ message }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endwith %}
+{% block content %}{% endblock %}
+<footer class="footer-section">
+  <div class="container">
+    <div class="row">
+      <div class="col-md-4 mb-3"><h5><i class="fas fa-chart-line me-2"></i>InvestPlatform</h5><p class="text-muted-light">Платформа для инвестирования в залоговые активы.</p></div>
+      <div class="col-md-4 mb-3"><h6>Навигация</h6><ul class="list-unstyled">
+        {% if current_user.is_authenticated %}<li><a href="{{ url_for('catalog') }}">Каталог</a></li><li><a href="{{ url_for('dashboard') }}">Личный кабинет</a></li>{% endif %}
+      </ul></div>
+      <div class="col-md-4 mb-3"><h6>Контакты</h6><p class="text-muted-light"><i class="fas fa-envelope me-2"></i>info@investplatform.ru</p></div>
+    </div>
+    <hr class="footer-hr"><p class="text-center text-muted-light mb-0">&copy; 2026 InvestPlatform. Все права защищены.</p>
+  </div>
+</footer>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body></html>

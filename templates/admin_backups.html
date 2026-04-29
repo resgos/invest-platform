@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}СУБД и Telegram — InvestPlatform{% endblock %}
+{% block content %}
+<section class="dashboard-section">
+  <div class="container">
+    <div class="dashboard-header">
+      <div><h1><i class="fas fa-database me-2"></i>СУБД и интеграции</h1><p class="text-muted-light">Снапшоты базы данных, подключение, Telegram</p></div>
+      <div class="d-flex gap-2 flex-wrap">
+        <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-accent"><i class="fas fa-arrow-left me-2"></i>Назад</a>
+      </div>
+    </div>
+
+    <!-- Telegram Status -->
+    <div class="glass-card mb-4">
+      <h4 class="mb-3"><i class="fab fa-telegram me-2" style="color:#2AABEE"></i>Telegram-интеграция</h4>
+      <div class="row g-3 align-items-center">
+        <div class="col-md-8">
+          <div class="d-flex align-items-center gap-3 mb-2">
+            <span class="badge {% if tg_ok %}bg-success-glow{% else %}bg-danger{% endif %}" style="font-size:0.85rem;padding:6px 12px">
+              {% if tg_ok %}<i class="fas fa-check-circle me-1"></i>Подключён{% else %}<i class="fas fa-times-circle me-1"></i>Не подключён{% endif %}
+            </span>
+            <span style="color:var(--text-muted)">{{ tg_info }}</span>
+          </div>
+          {% if not tg_ok %}
+          <div class="mt-2" style="background:rgba(239,68,68,0.1);border-radius:8px;padding:12px">
+            <p style="color:#f87171;margin:0;font-size:0.85rem">
+              <i class="fas fa-exclamation-triangle me-1"></i>
+              {% if 'сети' in tg_info or 'network' in tg_info|lower %}
+              <b>Telegram API заблокирован.</b> На VPS в РФ требуется прокси.<br>
+              Укажите <code>TELEGRAM_PROXY</code> в файле <code>.env</code>:<br>
+              <code>TELEGRAM_PROXY=http://user:pass@proxy:8080</code> или <code>socks5://user:pass@proxy:1080</code><br>
+              Альтернатива: используйте зарубежный VPS (Нидерланды, Германия) — прокси не понадобится.
+              {% else %}
+              {{ tg_info }}
+              {% endif %}
+            </p>
+          </div>
+          {% endif %}
+        </div>
+        <div class="col-md-4 text-md-end">
+          <form method="POST" action="{{ url_for('admin_test_telegram') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-accent"><i class="fab fa-telegram me-2"></i>Отправить тест</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- DB Info -->
+    {% if db_info %}
+    <div class="glass-card mb-4">
+      <h4 class="mb-3"><i class="fas fa-info-circle me-2"></i>Информация о базе данных</h4>
+      <div class="row g-3 mb-3">
+        <div class="col-md-4">
+          <div class="invest-param-row"><span>Тип СУБД</span><span style="color:#fff;font-weight:600">SQLite 3</span></div>
+        </div>
+        <div class="col-md-4">
+          <div class="invest-param-row"><span>Размер</span><span style="color:#fff;font-weight:600">{{ db_info.size_human }}</span></div>
+        </div>
+        <div class="col-md-4">
+          <div class="invest-param-row"><span>Файл</span><span style="color:var(--text-muted);font-size:0.8rem">instance/invest.db</span></div>
+        </div>
+      </div>
+
+      <details style="margin-top:12px">
+        <summary style="color:var(--accent-light);cursor:pointer;font-weight:600;font-size:0.9rem"><i class="fas fa-table me-2"></i>Таблицы и структура ({{ db_info.tables|length }})</summary>
+        <div class="table-responsive mt-3">
+          <table class="table table-dark-custom">
+            <thead><tr><th>Таблица</th><th>Записей</th><th>Колонки</th></tr></thead>
+            <tbody>
+              {% for t in db_info.tables %}
+              <tr>
+                <td style="font-weight:600;color:#fff">{{ t.name }}</td>
+                <td>{{ t.rows }}</td>
+                <td>
+                  {% for c in t.columns %}
+                  <span class="badge" style="background:rgba(99,102,241,0.15);color:var(--accent-light);margin:1px;font-size:0.7rem;font-weight:400">
+                    {{ c.name }}{% if c.pk %} <i class="fas fa-key" style="font-size:0.6rem;color:#ffc107"></i>{% endif %}
+                    <span style="color:var(--text-muted);font-size:0.6rem">{{ c.type }}</span>
+                  </span>
+                  {% endfor %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+
+      <!-- Connection info -->
+      <details style="margin-top:16px">
+        <summary style="color:var(--accent-light);cursor:pointer;font-weight:600;font-size:0.9rem"><i class="fas fa-plug me-2"></i>Как подключиться к БД</summary>
+        <div class="mt-3" style="background:rgba(99,102,241,0.05);border-radius:8px;padding:16px">
+          <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px">
+            SQLite — файловая СУБД. БД — это один файл: <code>instance/invest.db</code>.
+            Для подключения не нужен сервер или пароль.
+          </p>
+          <div style="margin-bottom:12px">
+            <p style="color:#fff;font-weight:600;font-size:0.85rem;margin-bottom:4px"><i class="fas fa-terminal me-2"></i>Командная строка (на сервере)</p>
+            <code style="display:block;background:rgba(0,0,0,0.3);padding:10px;border-radius:6px;font-size:0.8rem;color:#e2e8f0">
+              cd ~/investplatform<br>
+              sqlite3 instance/invest.db<br>
+              <span style="color:var(--text-muted)"># Далее SQL-запросы, например:</span><br>
+              .tables<br>
+              SELECT * FROM users;<br>
+              .quit
+            </code>
+          </div>
+          <div style="margin-bottom:12px">
+            <p style="color:#fff;font-weight:600;font-size:0.85rem;margin-bottom:4px"><i class="fas fa-desktop me-2"></i>GUI: DB Browser for SQLite</p>
+            <p style="color:var(--text-muted);font-size:0.8rem;margin:0">
+              Скачайте <a href="https://sqlitebrowser.org/" target="_blank" class="accent-link">sqlitebrowser.org</a>.<br>
+              Скопируйте <code>instance/invest.db</code> на локальный ПК через SCP:<br>
+              <code style="background:rgba(0,0,0,0.3);padding:4px 8px;border-radius:4px;font-size:0.78rem">scp deploy@ВАШ_IP:~/investplatform/instance/invest.db ./invest.db</code><br>
+              Откройте файл в DB Browser.
+            </p>
+          </div>
+          <div>
+            <p style="color:#fff;font-weight:600;font-size:0.85rem;margin-bottom:4px"><i class="fab fa-python me-2"></i>Python-скрипт</p>
+            <code style="display:block;background:rgba(0,0,0,0.3);padding:10px;border-radius:6px;font-size:0.8rem;color:#e2e8f0">
+              import sqlite3<br>
+              conn = sqlite3.connect('instance/invest.db')<br>
+              cursor = conn.cursor()<br>
+              cursor.execute('SELECT * FROM users')<br>
+              for row in cursor.fetchall():<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;print(row)<br>
+              conn.close()
+            </code>
+          </div>
+        </div>
+      </details>
+    </div>
+    {% endif %}
+
+    <!-- Snapshots -->
+    <div class="glass-card mb-4">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+        <h4 class="mb-0"><i class="fas fa-camera me-2"></i>Снапшоты БД</h4>
+        <form method="POST" action="{{ url_for('admin_create_backup') }}" class="d-flex gap-2 align-items-end">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="text" name="label" class="form-control form-control-sm" placeholder="Метка (опц.)" style="width:140px">
+          <button type="submit" class="btn btn-accent btn-sm"><i class="fas fa-camera me-2"></i>Создать снапшот</button>
+        </form>
+      </div>
+
+      <p style="color:var(--text-muted);font-size:0.8rem;margin-bottom:12px">
+        <i class="fas fa-shield-alt me-1"></i>
+        Снапшоты используют SQLite Backup API — безопасно для работающего сервера.
+        Хранится до 30 последних. Автоматическая ротация старых.
+      </p>
+
+      {% if snapshots %}
+      <div class="table-responsive">
+        <table class="table table-dark-custom">
+          <thead><tr><th>Файл</th><th>Размер</th><th>Дата</th><th>Действия</th></tr></thead>
+          <tbody>
+            {% for s in snapshots %}
+            <tr>
+              <td><i class="fas fa-file-archive me-1" style="color:var(--accent-light)"></i>{{ s.filename }}</td>
+              <td>{{ s.size_human }}</td>
+              <td>{{ s.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+              <td>
+                <div class="d-flex gap-1 flex-wrap">
+                  <a href="{{ url_for('admin_download_backup', filename=s.filename) }}" class="btn btn-sm btn-outline-accent" title="Скачать"><i class="fas fa-download"></i></a>
+                  <form method="POST" action="{{ url_for('admin_restore_backup', filename=s.filename) }}" class="d-inline" onsubmit="return confirm('Восстановить БД из {{ s.filename }}? Текущее состояние будет сохранено автоматически.')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-accent" title="Восстановить"><i class="fas fa-undo"></i></button>
+                  </form>
+                  <form method="POST" action="{{ url_for('admin_delete_backup', filename=s.filename) }}" class="d-inline" onsubmit="return confirm('Удалить снапшот {{ s.filename }}?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Удалить"><i class="fas fa-trash"></i></button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center py-4">
+        <i class="fas fa-camera fa-2x mb-2" style="color:var(--text-muted)"></i>
+        <p class="text-muted-light">Нет снапшотов. Создайте первый.</p>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- CLI commands for cron backups -->
+    <div class="glass-card">
+      <h4 class="mb-3"><i class="fas fa-clock me-2"></i>Автоматические бэкапы (cron)</h4>
+      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px">
+        Для ежедневного автоматического бэкапа добавьте в crontab:
+      </p>
+      <code style="display:block;background:rgba(0,0,0,0.3);padding:12px;border-radius:6px;font-size:0.8rem;color:#e2e8f0">
+        <span style="color:var(--text-muted)"># Ежедневно в 3:00 ночи</span><br>
+        crontab -e<br>
+        0 3 * * * cd /home/deploy/investplatform && /home/deploy/investplatform/venv/bin/python db_backup.py create
+      </code>
+    </div>
+  </div>
+</section>
+{% endblock %}

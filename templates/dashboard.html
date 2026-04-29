@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Личный кабинет — InvestPlatform{% endblock %}
+{% block content %}
+<section class="dashboard-section">
+  <div class="container">
+    <div class="dashboard-header">
+      <div>
+        <h1><i class="fas fa-chart-pie me-2"></i>Личный кабинет</h1>
+        <p class="text-muted-light">{{ user.full_name }} &middot; {{ user.email }}</p>
+      </div>
+      <div class="d-flex gap-2 flex-wrap">
+        <a href="{{ url_for('catalog') }}" class="btn btn-accent"><i class="fas fa-briefcase me-2"></i>Каталог</a>
+        <a href="{{ url_for('change_password') }}" class="btn btn-outline-accent"><i class="fas fa-key me-2"></i>Сменить пароль</a>
+      </div>
+    </div>
+
+    <!-- Stats cards -->
+    <div class="row g-3 mb-4">
+      <div class="col-lg-2 col-md-4 col-6"><div class="dash-stat-card glass-card"><div class="dash-stat-icon bg-accent"><i class="fas fa-wallet"></i></div><div class="dash-stat-value">{{ "{:,.0f}".format(total_invested).replace(",", " ") }} ₽</div><div class="dash-stat-label">Инвестировано</div></div></div>
+      <div class="col-lg-2 col-md-4 col-6"><div class="dash-stat-card glass-card"><div class="dash-stat-icon bg-profit"><i class="fas fa-coins"></i></div><div class="dash-stat-value">{{ "{:,.0f}".format(total_profit).replace(",", " ") }} ₽</div><div class="dash-stat-label">Ожидаемая прибыль</div></div></div>
+      <div class="col-lg-2 col-md-4 col-6"><div class="dash-stat-card glass-card"><div class="dash-stat-icon" style="background:linear-gradient(135deg,#10b981,#059669)"><i class="fas fa-check-circle"></i></div><div class="dash-stat-value">{{ "{:,.0f}".format(total_actual_profit).replace(",", " ") }} ₽</div><div class="dash-stat-label">Получено прибыли</div></div></div>
+      <div class="col-lg-2 col-md-4 col-4"><div class="dash-stat-card glass-card"><div class="dash-stat-icon bg-active"><i class="fas fa-handshake"></i></div><div class="dash-stat-value">{{ active_deals }}</div><div class="dash-stat-label">Активных</div></div></div>
+      <div class="col-lg-2 col-md-4 col-4"><div class="dash-stat-card glass-card"><div class="dash-stat-icon" style="background:linear-gradient(135deg,#ffc107,#ff9800)"><i class="fas fa-clock"></i></div><div class="dash-stat-value">{{ pending_deals }}</div><div class="dash-stat-label">Ожидание</div></div></div>
+      <div class="col-lg-2 col-md-4 col-4"><div class="dash-stat-card glass-card"><div class="dash-stat-icon bg-closed"><i class="fas fa-archive"></i></div><div class="dash-stat-value">{{ closed_deals }}</div><div class="dash-stat-label">Закрытых</div></div></div>
+    </div>
+
+    <!-- Tabs + Date filter -->
+    <div class="glass-card mb-4">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+        <div class="tab-bar mb-0">
+          <a href="{{ url_for('dashboard', inv_tab='all', date_from=date_from, date_to=date_to) }}" class="tab-item {% if inv_tab == 'all' %}active{% endif %}">Все</a>
+          <a href="{{ url_for('dashboard', inv_tab='active', date_from=date_from, date_to=date_to) }}" class="tab-item {% if inv_tab == 'active' %}active{% endif %}">Активные</a>
+          <a href="{{ url_for('dashboard', inv_tab='pending', date_from=date_from, date_to=date_to) }}" class="tab-item {% if inv_tab == 'pending' %}active{% endif %}">Ожидание</a>
+          <a href="{{ url_for('dashboard', inv_tab='closed', date_from=date_from, date_to=date_to) }}" class="tab-item {% if inv_tab == 'closed' %}active{% endif %}">Закрытые</a>
+        </div>
+        <form method="GET" class="d-flex gap-2 align-items-end flex-wrap date-filter-form">
+          <input type="hidden" name="inv_tab" value="{{ inv_tab }}">
+          <div>
+            <label class="form-label mb-0" style="font-size:0.75rem">С</label>
+            <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
+          </div>
+          <div>
+            <label class="form-label mb-0" style="font-size:0.75rem">По</label>
+            <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
+          </div>
+          <button type="submit" class="btn btn-accent btn-sm"><i class="fas fa-filter"></i></button>
+          {% if date_from or date_to %}
+          <a href="{{ url_for('dashboard', inv_tab=inv_tab) }}" class="btn btn-outline-accent btn-sm" title="Сбросить"><i class="fas fa-times"></i></a>
+          {% endif %}
+        </form>
+      </div>
+
+      <h4 class="mb-3"><i class="fas fa-list me-2"></i>Мои инвестиции</h4>
+      {% if investments %}
+      <div class="table-responsive">
+        <table class="table table-dark-custom">
+          <thead><tr><th>Объект</th><th>Сумма</th><th>Доходность</th><th>Ожид. прибыль</th><th>Получено</th><th class="d-none d-md-table-cell">Период</th><th class="d-none d-md-table-cell">Срок (дн.)</th><th>Статус</th><th class="d-none d-md-table-cell">Дата</th></tr></thead>
+          <tbody>
+            {% for inv in investments %}
+            <tr>
+              <td><a href="{{ url_for('deal_detail', deal_id=inv.deal.id) }}" class="accent-link">{{ inv.deal.title }}</a></td>
+              <td>{{ "{:,.0f}".format(inv.amount).replace(",", " ") }} ₽</td>
+              <td class="text-profit">+{{ inv.deal.expected_profit_pct }}%</td>
+              <td class="text-profit">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</td>
+              <td>
+                {% if inv.actual_profit > 0 %}
+                <span style="color:#10b981;font-weight:600">+{{ "{:,.0f}".format(inv.actual_profit).replace(",", " ") }} ₽</span>
+                {% if inv.expected_profit > 0 %}
+                <div class="pool-progress mt-1" style="height:4px"><div class="progress-bar-custom" style="height:4px"><div class="progress-fill" style="width:{{ inv.profit_progress_pct }}%;background:linear-gradient(90deg,#10b981,#059669)"></div></div></div>
+                <small class="text-muted" style="font-size:0.7rem">{{ inv.profit_progress_pct }}%</small>
+                {% endif %}
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td class="d-none d-md-table-cell"><small>{{ inv.term_display }}</small></td>
+              <td class="d-none d-md-table-cell">{% if inv.date_start and inv.date_end %}{{ (inv.date_end - inv.date_start).days }} дн.{% elif inv.days_remaining is not none %}{{ inv.days_remaining }} дн.{% else %}—{% endif %}</td>
+              <td>
+                {% if inv.status == 'pending' %}<span class="badge bg-warning text-dark"><i class="fas fa-clock me-1"></i>В обработке</span>
+                {% elif inv.status == 'active' %}<span class="badge bg-success-glow">Активная</span>
+                {% elif inv.status == 'rejected' %}<span class="badge bg-danger"><i class="fas fa-times me-1"></i>Отклонена</span>
+                {% elif inv.status == 'closed' %}<span class="badge bg-secondary">Закрыта</span>
+                {% else %}<span class="badge bg-secondary">{{ inv.status }}</span>{% endif %}
+              </td>
+              <td class="d-none d-md-table-cell">{{ inv.invested_at.strftime('%d.%m.%Y') if inv.invested_at else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center py-4">
+        <i class="fas fa-inbox fa-2x mb-2" style="color:var(--text-muted)"></i>
+        <p class="text-muted-light mb-2">{% if inv_tab == 'pending' %}Нет ожидающих заявок{% elif inv_tab == 'closed' %}Нет закрытых сделок{% elif inv_tab == 'active' %}Нет активных инвестиций{% else %}Нет инвестиций{% endif %}</p>
+        <a href="{{ url_for('catalog') }}" class="btn btn-accent btn-sm"><i class="fas fa-briefcase me-2"></i>Перейти в каталог</a>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if transactions %}
+    <div class="glass-card">
+      <h4 class="mb-3"><i class="fas fa-history me-2"></i>История операций</h4>
+      <div class="transaction-list">
+        {% for txn in transactions %}
+        <div class="transaction-item">
+          <div class="transaction-icon">
+            {% if txn.type == 'investment' %}<i class="fas fa-arrow-up" style="color:var(--accent-light)"></i>
+            {% elif txn.type == 'profit' %}<i class="fas fa-arrow-down" style="color:var(--profit-color)"></i>
+            {% else %}<i class="fas fa-exchange-alt" style="color:var(--text-muted)"></i>{% endif %}
+          </div>
+          <div class="transaction-info">
+            <div class="transaction-desc">{{ txn.description }}</div>
+            <div class="transaction-date">{{ txn.created_at.strftime('%d.%m.%Y %H:%M') if txn.created_at else '—' }}</div>
+          </div>
+          <div class="transaction-amount {% if txn.type == 'profit' %}text-profit{% else %}text-expense{% endif %}">
+            {{ '{:+,.0f}'.format(txn.amount if txn.type == 'profit' else -txn.amount).replace(',', ' ') }} ₽
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %}{{ ad.title }} — InvestPlatform{% endblock %}
+{% block content %}
+<section class="detail-section">
+  <div class="container">
+    <nav class="mb-4"><a href="{{ url_for('catalog') }}" class="accent-link"><i class="fas fa-arrow-left me-1"></i>Назад к каталогу</a></nav>
+    <div class="row g-4">
+      <div class="col-lg-8">
+        <div class="glass-card detail-card">
+          <div class="detail-gallery">
+            {% if ad.images %}
+            {% set imgs = ad.images.split(',') %}
+            <img src="{{ url_for('uploaded_file', filename=imgs[0]) }}" class="detail-main-img" id="mainImg" alt="{{ ad.title }}">
+            {% if imgs|length > 1 %}
+            <div class="detail-thumbs">
+              {% for img in imgs %}<img src="{{ url_for('uploaded_file', filename=img) }}" class="detail-thumb {% if loop.first %}active{% endif %}" onclick="document.getElementById('mainImg').src=this.src; document.querySelectorAll('.detail-thumb').forEach(t=>t.classList.remove('active')); this.classList.add('active');" alt="">{% endfor %}
+            </div>
+            {% endif %}
+            {% else %}
+            <img src="{{ url_for('static', filename='img/placeholders/' + ad.category + '.jpg') }}" class="detail-main-img" alt="{{ ad.title }}">
+            {% endif %}
+          </div>
+          <h1 class="detail-title">{{ ad.title }}</h1>
+          <div class="detail-badges mb-3">
+            <span class="cat-badge">{{ {'realestate':'Недвижимость','auto':'Авто','business':'Бизнес','equipment':'Оборудование','other':'Другое'}.get(ad.category, ad.category) }}</span>
+            {% if ad.is_urgent_sale %}
+            <span class="card-badge" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;font-weight:600">Срочная продажа</span>
+            {% else %}
+            <span class="card-badge badge-{{ ad.risk_level }}">{{ {'low':'Низкий риск','medium':'Средний риск','high':'Высокий риск'}.get(ad.risk_level, ad.risk_level) }}</span>
+            {% endif %}
+          </div>
+          <div class="detail-description">
+            <h5>Описание</h5>
+            <p>{{ ad.description }}</p>
+          </div>
+          {% if ad.category == 'realestate' and (ad.property_type or ad.area or ad.location) %}
+          <div class="mt-4"><h5 style="color:#fff">Параметры объекта</h5>
+            <div class="params-grid">
+              {% if ad.property_type %}<div class="param-item"><span class="param-label">Тип</span><span class="param-val">{{ ad.property_type }}</span></div>{% endif %}
+              {% if ad.area %}<div class="param-item"><span class="param-label">Площадь</span><span class="param-val">{{ ad.area }} м²</span></div>{% endif %}
+              {% if ad.rooms %}<div class="param-item"><span class="param-label">Комнат</span><span class="param-val">{{ ad.rooms }}</span></div>{% endif %}
+              {% if ad.location %}<div class="param-item"><span class="param-label">Расположение</span><span class="param-val">{{ ad.location }}</span></div>{% endif %}
+              {% if ad.floor %}<div class="param-item"><span class="param-label">Этаж</span><span class="param-val">{{ ad.floor }}{% if ad.total_floors %}/{{ ad.total_floors }}{% endif %}</span></div>{% endif %}
+            </div>
+          </div>
+          {% endif %}
+          {% if ad.category == 'auto' and (ad.car_brand or ad.car_model) %}
+          <div class="mt-4"><h5 style="color:#fff">Характеристики авто</h5>
+            <div class="params-grid">
+              {% if ad.car_brand %}<div class="param-item"><span class="param-label">Марка</span><span class="param-val">{{ ad.car_brand }}</span></div>{% endif %}
+              {% if ad.car_model %}<div class="param-item"><span class="param-label">Модель</span><span class="param-val">{{ ad.car_model }}</span></div>{% endif %}
+              {% if ad.car_year %}<div class="param-item"><span class="param-label">Год</span><span class="param-val">{{ ad.car_year }}</span></div>{% endif %}
+              {% if ad.car_power %}<div class="param-item"><span class="param-label">Мощность</span><span class="param-val">{{ ad.car_power }} л.с.</span></div>{% endif %}
+              {% if ad.car_mileage %}<div class="param-item"><span class="param-label">Пробег</span><span class="param-val">{{ "{:,}".format(ad.car_mileage).replace(",", " ") }} км</span></div>{% endif %}
+              {% if ad.car_transmission %}<div class="param-item"><span class="param-label">КПП</span><span class="param-val">{{ {'auto':'Автомат','manual':'Механика'}.get(ad.car_transmission, ad.car_transmission) }}</span></div>{% endif %}
+              {% if ad.car_fuel %}<div class="param-item"><span class="param-label">Топливо</span><span class="param-val">{{ {'petrol':'Бензин','diesel':'Дизель','electric':'Электро','hybrid':'Гибрид'}.get(ad.car_fuel, ad.car_fuel) }}</span></div>{% endif %}
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      <div class="col-lg-4">
+        {% if ad.is_urgent_sale %}
+        <!-- Urgent Sale sidebar -->
+        <div class="glass-card invest-sidebar mb-4">
+          <h5 style="color:#fff" class="mb-3"><i class="fas fa-bolt me-2" style="color:#f59e0b"></i>Срочная продажа</h5>
+          <div class="invest-params">
+            <div class="invest-param-row"><span>Стоимость</span><span style="color:#f59e0b;font-weight:700;font-size:1.2rem">{{ "{:,.0f}".format(ad.price).replace(",", " ") }} ₽</span></div>
+            <div class="invest-param-row"><span>Категория</span><span style="color:#fff">{{ {'realestate':'Недвижимость','auto':'Авто','business':'Бизнес','equipment':'Оборудование','other':'Другое'}.get(ad.category, ad.category) }}</span></div>
+            {% if ad.date_end %}
+            <div class="invest-param-row"><span>Действует до</span><span style="color:{% if ad.is_expired %}var(--danger-color){% else %}#fff{% endif %}">{{ ad.date_end.strftime('%d.%m.%Y') }}{% if ad.is_expired %} (истекло){% endif %}</span></div>
+            {% endif %}
+          </div>
+        </div>
+        {% if ad.status == 'active' and not ad.is_expired and not current_user.is_admin %}
+        <div class="glass-card" style="padding:20px">
+          <form method="POST" action="{{ url_for('invest', deal_id=ad.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="amount" value="{{ ad.price }}">
+            <button type="submit" class="btn btn-accent w-100 btn-lg" onclick="return confirm('Подтверждаете покупку?')"><i class="fas fa-shopping-cart me-2"></i>Купить</button>
+          </form>
+        </div>
+        {% endif %}
+        {% else %}
+        <!-- Investment sidebar -->
+        <div class="glass-card invest-sidebar mb-4">
+          <h5 style="color:#fff" class="mb-3">Инвестиционные параметры</h5>
+          <div class="invest-params">
+            <div class="invest-param-row"><span>Стоимость актива</span><span style="color:#fff; font-weight:600">{{ "{:,.0f}".format(ad.price).replace(",", " ") }} ₽</span></div>
+            <div class="invest-param-row"><span>Доходность</span><span class="text-profit" style="font-weight:600">+{{ ad.expected_profit_pct }}%</span></div>
+            <div class="invest-param-row"><span>Ожидаемая прибыль</span><span class="text-profit" style="font-weight:600">+{{ "{:,.0f}".format(ad.price * ad.expected_profit_pct / 100 * ad.term_days_for_calc / 365).replace(",", " ") }} ₽</span></div>
+            <div class="invest-param-row"><span>Срок</span><span style="color:#fff">{{ ad.term_display }}</span></div>
+            {% if ad.days_remaining is not none %}
+            <div class="invest-param-row"><span>Осталось</span><span style="color:{% if ad.is_expired %}var(--danger-color){% else %}var(--profit-color){% endif %}">{% if ad.is_expired %}Завершена{% else %}{{ ad.days_remaining }} дн.{% endif %}</span></div>
+            {% endif %}
+            <div class="invest-param-row"><span>Мин. инвестиция</span><span style="color:#fff">{{ "{:,.0f}".format(ad.min_investment).replace(",", " ") }} ₽</span></div>
+            <div class="invest-param-row"><span>Общий пул</span><span style="color:#fff">{{ "{:,.0f}".format(ad.total_pool).replace(",", " ") }} ₽</span></div>
+            <div class="invest-param-row"><span>Собрано</span><span style="color:#fff">{{ "{:,.0f}".format(ad.collected_amount).replace(",", " ") }} ₽ ({{ ad.pool_pct }}%)</span></div>
+            <div class="invest-param-row"><span>Инвесторов</span><span style="color:#fff">{{ investors_count }}</span></div>
+          </div>
+          <div class="pool-progress mt-3">
+            <div class="progress-bar-custom"><div class="progress-fill" style="width:{{ ad.pool_pct }}%"></div></div>
+          </div>
+        </div>
+        {% if ad.status == 'active' and ad.remaining > 0 and not current_user.is_admin %}
+        <div class="glass-card calculator-card">
+          <h5 style="color:#fff" class="mb-3"><i class="fas fa-calculator me-2"></i>Калькулятор</h5>
+          <form method="POST" action="{{ url_for('invest', deal_id=ad.id) }}" id="investForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+              <label class="form-label">Сумма инвестиции (₽)</label>
+              <input type="number" name="amount" id="calcAmount" class="form-control" min="{{ ad.min_investment }}" max="{{ ad.remaining }}" step="1" value="{{ ad.min_investment|int }}">
+            </div>
+            <div class="calc-results mb-3" id="calcResults">
+              <div class="calc-row"><span class="text-muted-light">Срок</span><span class="calc-value" id="calcTerm">—</span></div>
+              <div class="calc-row"><span class="text-muted-light">Ожидаемая прибыль</span><span class="calc-value text-profit" id="calcProfit">—</span></div>
+              <div class="calc-row"><span class="text-muted-light">В месяц</span><span class="calc-value" id="calcMonthly">—</span></div>
+              <div class="calc-row"><span class="text-muted-light">В день</span><span class="calc-value" id="calcDaily">—</span></div>
+              <div class="calc-row"><span class="text-muted-light calc-total">Итого возврат</span><span class="calc-value calc-total text-profit" id="calcTotal">—</span></div>
+            </div>
+            <button type="submit" class="btn btn-accent w-100" onclick="return confirm('Подтверждаете инвестицию?')"><i class="fas fa-hand-holding-usd me-2"></i>Инвестировать</button>
+          </form>
+        </div>
+        {% endif %}
+        {% endif %}
+        {% if ad.contact_info %}
+        <div class="glass-card mt-4" style="padding:20px"><h6 style="color:#fff"><i class="fas fa-phone me-2"></i>Контакты</h6><p class="text-muted-light mb-0">{{ ad.contact_info }}</p></div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const amt = document.getElementById('calcAmount');
+    if (!amt) return;
+    const pct = {{ ad.expected_profit_pct }};
+
+    // Deal term settings
+    const dealDateEnd = {% if ad.date_end %}'{{ ad.date_end.isoformat() }}'{% else %}null{% endif %};
+    const dealTermMonths = {% if ad.investment_term_months %}{{ ad.investment_term_months }}{% else %}null{% endif %};
+    const dealTermDays = {% if ad.investment_term_days %}{{ ad.investment_term_days }}{% else %}null{% endif %};
+
+    function calcTerm() {
+        const today = new Date();
+        today.setHours(0,0,0,0);
+
+        let candidates = [];
+
+        if (dealDateEnd) {
+            candidates.push(new Date(dealDateEnd + 'T00:00:00'));
+        }
+        if (dealTermMonths) {
+            let d = new Date(today);
+            d.setMonth(d.getMonth() + dealTermMonths);
+            candidates.push(d);
+        }
+        if (dealTermDays) {
+            let d = new Date(today);
+            d.setDate(d.getDate() + dealTermDays);
+            candidates.push(d);
+        }
+
+        let endDate = null;
+        if (candidates.length > 0) {
+            endDate = candidates.reduce((a, b) => a < b ? a : b);
+        }
+
+        let months = 12, days = 365, termText = '';
+        if (endDate) {
+            const diffDays = Math.max(Math.round((endDate - today) / (1000*60*60*24)), 1);
+            days = diffDays;
+            months = Math.max(Math.round(diffDays / 30), 1);
+            const startStr = today.toLocaleDateString('ru-RU');
+            const endStr = endDate.toLocaleDateString('ru-RU');
+            termText = startStr + ' — ' + endStr + ' (' + days + ' дн. / ' + months + ' мес.)';
+        } else {
+            termText = 'Бессрочно';
+            days = 365;
+            months = 12;
+        }
+
+        return {months, days, termText};
+    }
+
+    function calc() {
+        const a = parseFloat(amt.value) || 0;
+        const {months, days, termText} = calcTerm();
+        const profit = a * pct / 100 * (days / 365);
+        const monthly = months > 0 ? profit / months : 0;
+        const daily = days > 0 ? profit / days : 0;
+
+        document.getElementById('calcTerm').textContent = termText;
+        document.getElementById('calcProfit').textContent = profit.toLocaleString('ru-RU', {maximumFractionDigits:0}) + ' ₽';
+        document.getElementById('calcMonthly').textContent = monthly.toLocaleString('ru-RU', {maximumFractionDigits:0}) + ' ₽';
+        document.getElementById('calcDaily').textContent = daily.toLocaleString('ru-RU', {maximumFractionDigits:0}) + ' ₽';
+        document.getElementById('calcTotal').textContent = (a + profit).toLocaleString('ru-RU', {maximumFractionDigits:0}) + ' ₽';
+    }
+    amt.addEventListener('input', calc);
+    calc();
+});
+</script>
+{% endblock %}

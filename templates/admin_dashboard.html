@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Панель администратора — InvestPlatform{% endblock %}
+{% block content %}
+<section class="dashboard-section">
+  <div class="container">
+    <div class="dashboard-header">
+      <div><h1><i class="fas fa-shield-alt me-2"></i>Панель администратора</h1><p class="text-muted-light">Управление платформой</p></div>
+      <div class="d-flex gap-2 flex-wrap">
+        {% if pending_count > 0 %}
+        <a href="{{ url_for('admin_pending_investments') }}" class="btn btn-warning"><i class="fas fa-clock me-2"></i>Заявки <span class="badge bg-dark ms-1">{{ pending_count }}</span></a>
+        {% endif %}
+        <a href="{{ url_for('create_deal') }}" class="btn btn-accent"><i class="fas fa-plus me-2"></i>Предложение</a>
+        <a href="{{ url_for('create_existing_investment') }}" class="btn btn-outline-accent"><i class="fas fa-file-invoice-dollar me-2"></i>Сделка</a>
+        <a href="{{ url_for('admin_create_user') }}" class="btn btn-outline-accent"><i class="fas fa-user-plus me-2"></i>Аккаунт</a>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="row g-3 mb-4">
+      <div class="col-lg-2 col-md-4 col-6"><div class="dash-stat-card glass-card"><div class="dash-stat-icon bg-accent"><i class="fas fa-list"></i></div><div class="dash-stat-value">{{ total_ads }}</div><div class="dash-stat-label">Всего</div></div></div>
+      <div class="col-lg-2 col-md-4 col-6"><div class="dash-stat-card glass-card"><div class="dash-stat-icon bg-profit"><i class="fas fa-check"></i></div><div class="dash-stat-value">{{ active_ads }}</div><div class="dash-stat-label">Активных</div></div></div>
+      <div class="col-lg-2 col-md-4 col-6"><div class="dash-stat-card glass-card"><div class="dash-stat-icon bg-active"><i class="fas fa-ruble-sign"></i></div><div class="dash-stat-value">{{ "{:,.0f}".format(total_investments).replace(",", " ") }} ₽</div><div class="dash-stat-label">Инвестиции</div></div></div>
+      <div class="col-lg-2 col-md-4 col-6"><div class="dash-stat-card glass-card"><div class="dash-stat-icon" style="background:linear-gradient(135deg,#10b981,#059669)"><i class="fas fa-check-circle"></i></div><div class="dash-stat-value">{{ "{:,.0f}".format(total_actual_profit).replace(",", " ") }} ₽</div><div class="dash-stat-label">Получено прибыли</div></div></div>
+      <div class="col-lg-2 col-md-4 col-6"><div class="dash-stat-card glass-card"><div class="dash-stat-icon" style="background:linear-gradient(135deg,#3b82f6,#06b6d4)"><i class="fas fa-users"></i></div><div class="dash-stat-value">{{ total_users }}</div><div class="dash-stat-label">Инвесторов</div></div></div>
+      <div class="col-lg-2 col-md-4 col-6"><div class="dash-stat-card glass-card"><div class="dash-stat-icon" style="background:linear-gradient(135deg,#ffc107,#ff9800)"><i class="fas fa-clock"></i></div><div class="dash-stat-value">{{ pending_count }}</div><div class="dash-stat-label">Заявок</div></div></div>
+    </div>
+
+    <!-- Quick links -->
+    <div class="row g-3 mb-4">
+      <div class="col-md-3 col-6"><a href="{{ url_for('admin_pending_investments') }}" class="glass-card d-block text-center py-3" style="text-decoration:none;position:relative"><i class="fas fa-clock fa-2x mb-2" style="color:#ffc107"></i><div style="color:#fff;font-weight:600;font-size:0.9rem">Заявки</div>{% if pending_count > 0 %}<span class="badge bg-warning text-dark" style="position:absolute;top:10px;right:10px;font-size:0.85rem">{{ pending_count }}</span>{% endif %}</a></div>
+      <div class="col-md-3 col-6"><a href="{{ url_for('admin_users') }}" class="glass-card d-block text-center py-3" style="text-decoration:none"><i class="fas fa-users-cog fa-2x mb-2" style="color:var(--accent-light)"></i><div style="color:#fff;font-weight:600;font-size:0.9rem">Пользователи</div></a></div>
+      <div class="col-md-3 col-6"><a href="{{ url_for('admin_audit') }}" class="glass-card d-block text-center py-3" style="text-decoration:none"><i class="fas fa-clipboard-list fa-2x mb-2" style="color:var(--accent-light)"></i><div style="color:#fff;font-weight:600;font-size:0.9rem">Журнал аудита</div></a></div>
+      <div class="col-md-3 col-6"><a href="{{ url_for('admin_backups') }}" class="glass-card d-block text-center py-3" style="text-decoration:none"><i class="fas fa-database fa-2x mb-2" style="color:var(--accent-light)"></i><div style="color:#fff;font-weight:600;font-size:0.9rem">СУБД и Telegram</div></a></div>
+    </div>
+
+    <!-- Date filter + period stats -->
+    <div class="glass-card filter-bar mb-4">
+      <form method="GET" class="row g-3 align-items-end">
+        <input type="hidden" name="deal_tab" value="{{ deal_tab }}">
+        <div class="col-md-3 col-6">
+          <label class="form-label">Период с</label>
+          <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+        </div>
+        <div class="col-md-3 col-6">
+          <label class="form-label">Период по</label>
+          <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+        </div>
+        <div class="col-md-3 col-6"><button type="submit" class="btn btn-accent w-100"><i class="fas fa-filter me-1"></i>Фильтр</button></div>
+        {% if date_from or date_to %}
+        <div class="col-md-3 col-6"><a href="{{ url_for('admin_dashboard', deal_tab=deal_tab) }}" class="btn btn-outline-accent w-100"><i class="fas fa-times me-1"></i>Сбросить</a></div>
+        {% endif %}
+      </form>
+
+    </div>
+
+    <!-- Deals table with tabs -->
+    <div class="glass-card mb-4">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+        <h4 class="mb-0"><i class="fas fa-list me-2"></i>Предложения</h4>
+        <div class="tab-bar mb-0">
+          <a href="{{ url_for('admin_dashboard', deal_tab='active', date_from=date_from, date_to=date_to) }}" class="tab-item {% if deal_tab == 'active' %}active{% endif %}">Активные</a>
+          <a href="{{ url_for('admin_dashboard', deal_tab='closed', date_from=date_from, date_to=date_to) }}" class="tab-item {% if deal_tab == 'closed' %}active{% endif %}">Завершённые</a>
+          <a href="{{ url_for('admin_dashboard', deal_tab='all', date_from=date_from, date_to=date_to) }}" class="tab-item {% if deal_tab == 'all' %}active{% endif %}">Все</a>
+        </div>
+      </div>
+      <div class="table-responsive"><table class="table table-dark-custom"><thead><tr><th>#</th><th>Название</th><th>Тип</th><th>Категория</th><th>Цена</th><th>Доходность</th><th class="d-none d-md-table-cell">Период</th><th>Видимость</th><th>Статус</th><th>Действия</th></tr></thead><tbody>
+        {% for ad in ads %}<tr>
+          <td>{{ ad.id }}</td>
+          <td><a href="{{ url_for('deal_detail', deal_id=ad.id) }}" class="accent-link">{{ ad.title }}</a></td>
+          <td>{% if ad.is_urgent_sale %}<span class="badge" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;font-size:0.7rem">Срочная</span>{% else %}<span class="badge bg-success-glow" style="font-size:0.7rem">Инвест.</span>{% endif %}</td>
+          <td><span class="cat-badge">{{ {'realestate':'Недвижимость','auto':'Авто','business':'Бизнес','equipment':'Оборудование','other':'Другое'}.get(ad.category, ad.category) }}</span></td>
+          <td>{{ "{:,.0f}".format(ad.price).replace(",", " ") }} ₽</td>
+          <td>{% if ad.is_urgent_sale %}<span class="text-muted">—</span>{% else %}<span class="text-profit">+{{ ad.expected_profit_pct }}%</span>{% endif %}</td>
+          <td class="d-none d-md-table-cell"><small>{{ ad.term_display }}</small></td>
+          <td>{% if ad.visibility == 'all' %}<span class="badge visibility-all"><i class="fas fa-globe me-1"></i>Все</span>{% else %}<span class="badge visibility-selected"><i class="fas fa-lock me-1"></i>{{ ad.visible_to.count() }}</span>{% endif %}</td>
+          <td>
+            {% if ad.is_expired %}<span class="badge bg-secondary"><i class="fas fa-archive me-1"></i>Завершена</span>
+            {% elif ad.status == 'active' %}<span class="badge bg-success-glow">Активно</span>
+            {% else %}<span class="badge bg-secondary">Пауза</span>{% endif %}
+          </td>
+          <td><div class="d-flex gap-1 flex-wrap">
+            <a href="{{ url_for('edit_deal', deal_id=ad.id) }}" class="btn btn-sm btn-outline-accent" title="Редактировать"><i class="fas fa-pen"></i></a>
+            <a href="{{ url_for('edit_visibility', deal_id=ad.id) }}" class="btn btn-sm btn-outline-accent" title="Видимость"><i class="fas fa-eye"></i></a>
+            <a href="{{ url_for('toggle_deal', deal_id=ad.id) }}" class="btn btn-sm btn-outline-accent" title="Переключить"><i class="fas fa-{% if ad.status == 'active' %}pause{% else %}play{% endif %}"></i></a>
+            <form method="POST" action="{{ url_for('delete_deal', deal_id=ad.id) }}" class="d-inline" onsubmit="return confirm('Удалить «{{ ad.title }}»?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger" title="Удалить"><i class="fas fa-trash"></i></button>
+            </form>
+          </div></td>
+        </tr>{% endfor %}
+      </tbody></table></div>
+    </div>
+
+    {% if recent_investments %}
+    <div class="glass-card"><h4 class="mb-3"><i class="fas fa-money-bill-wave me-2"></i>Инвестиции{% if date_from or date_to %} за период{% endif %}</h4>
+      <div class="table-responsive"><table class="table table-dark-custom"><thead><tr><th>Инвестор</th><th>Объект</th><th>Сумма</th><th>Ожид. прибыль</th><th>Получено</th><th>Статус</th><th>Дата</th><th>Действие</th></tr></thead><tbody>
+        {% for inv, user, deal in recent_investments %}<tr>
+          <td>{{ user.full_name or user.username }}</td><td>{{ deal.title }}</td>
+          <td>{{ "{:,.0f}".format(inv.amount).replace(",", " ") }} ₽</td>
+          <td class="text-profit">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</td>
+          <td>
+            {% if inv.actual_profit > 0 %}
+            <span style="color:#10b981;font-weight:600">+{{ "{:,.0f}".format(inv.actual_profit).replace(",", " ") }} ₽</span>
+            {% if inv.expected_profit > 0 %}
+            <div class="pool-progress mt-1" style="height:3px"><div class="progress-bar-custom" style="height:3px"><div class="progress-fill" style="width:{{ inv.profit_progress_pct }}%;background:linear-gradient(90deg,#10b981,#059669)"></div></div></div>
+            {% endif %}
+            {% else %}<span class="text-muted">0 ₽</span>{% endif %}
+          </td>
+          <td>
+            {% if inv.status == 'pending' %}<span class="badge bg-warning text-dark">Ожидание</span>
+            {% elif inv.status == 'active' %}<span class="badge bg-success-glow">Активная</span>
+            {% elif inv.status == 'rejected' %}<span class="badge bg-danger">Отклонена</span>
+            {% elif inv.status == 'closed' %}<span class="badge bg-secondary">Закрыта</span>
+            {% else %}<span class="badge bg-secondary">{{ inv.status }}</span>{% endif %}
+          </td>
+          <td>{{ inv.invested_at.strftime('%d.%m.%Y') if inv.invested_at else '—' }}</td>
+          <td>
+            {% if inv.status in ['active', 'closed'] %}
+            <form method="POST" action="{{ url_for('update_actual_profit', inv_id=inv.id) }}" class="d-flex gap-1 align-items-center" style="min-width:160px">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="number" name="actual_profit" value="{{ inv.actual_profit|int }}" class="form-control form-control-sm" style="width:100px;font-size:0.8rem" min="0" step="100">
+              <button type="submit" class="btn btn-sm btn-outline-accent" title="Обновить прибыль"><i class="fas fa-save"></i></button>
+            </form>
+            {% else %}—{% endif %}
+          </td>
+        </tr>{% endfor %}
+      </tbody></table></div>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

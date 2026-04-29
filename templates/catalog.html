@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Каталог — InvestPlatform{% endblock %}
+{% block content %}
+<section class="catalog-section">
+  <div class="container">
+    <div class="catalog-header">
+      <h1 class="section-title"><i class="fas fa-briefcase me-2"></i>Каталог сделок</h1>
+      <p class="text-muted-light">Доступные вам предложения</p>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tab-bar mb-3">
+      <a href="{{ url_for('catalog', tab='active', category=category, risk=risk, sort=sort) }}" class="tab-item {% if tab == 'active' %}active{% endif %}">
+        <i class="fas fa-check-circle me-1"></i>Активные <span class="tab-count">{{ active_count }}</span>
+      </a>
+      <a href="{{ url_for('catalog', tab='closed', category=category, risk=risk, sort=sort) }}" class="tab-item {% if tab == 'closed' %}active{% endif %}">
+        <i class="fas fa-archive me-1"></i>Завершённые <span class="tab-count">{{ closed_count }}</span>
+      </a>
+      <a href="{{ url_for('catalog', tab='all', category=category, risk=risk, sort=sort) }}" class="tab-item {% if tab == 'all' %}active{% endif %}">
+        <i class="fas fa-list me-1"></i>Все <span class="tab-count">{{ all_count }}</span>
+      </a>
+    </div>
+
+    <!-- Filters -->
+    <div class="glass-card filter-bar mb-4">
+      <form method="GET" class="row g-3 align-items-end">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <div class="col-lg-2 col-md-4 col-6">
+          <label class="form-label">Категория</label>
+          <select name="category" class="form-select">
+            <option value="all" {{ 'selected' if category=='all' }}>Все</option>
+            <option value="realestate" {{ 'selected' if category=='realestate' }}>Недвижимость</option>
+            <option value="auto" {{ 'selected' if category=='auto' }}>Автомобили</option>
+            <option value="business" {{ 'selected' if category=='business' }}>Бизнес</option>
+            <option value="equipment" {{ 'selected' if category=='equipment' }}>Оборудование</option>
+            <option value="other" {{ 'selected' if category=='other' }}>Другое</option>
+          </select>
+        </div>
+        <div class="col-lg-2 col-md-4 col-6">
+          <label class="form-label">Риск</label>
+          <select name="risk" class="form-select">
+            <option value="all" {{ 'selected' if risk=='all' }}>Все</option>
+            <option value="low" {{ 'selected' if risk=='low' }}>Низкий</option>
+            <option value="medium" {{ 'selected' if risk=='medium' }}>Средний</option>
+            <option value="high" {{ 'selected' if risk=='high' }}>Высокий</option>
+          </select>
+        </div>
+        <div class="col-lg-2 col-md-4 col-6">
+          <label class="form-label">Период с</label>
+          <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+        </div>
+        <div class="col-lg-2 col-md-4 col-6">
+          <label class="form-label">Период по</label>
+          <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+        </div>
+        <div class="col-lg-2 col-md-4 col-6">
+          <label class="form-label">Сортировка</label>
+          <select name="sort" class="form-select">
+            <option value="newest" {{ 'selected' if sort=='newest' }}>Новые</option>
+            <option value="profit_desc" {{ 'selected' if sort=='profit_desc' }}>По доходности ↓</option>
+            <option value="price_asc" {{ 'selected' if sort=='price_asc' }}>По цене ↑</option>
+            <option value="price_desc" {{ 'selected' if sort=='price_desc' }}>По цене ↓</option>
+            <option value="end_date" {{ 'selected' if sort=='end_date' }}>По дате окончания</option>
+          </select>
+        </div>
+        <div class="col-lg-2 col-md-4 col-6"><button type="submit" class="btn btn-accent w-100"><i class="fas fa-filter me-1"></i>Применить</button></div>
+      </form>
+    </div>
+
+    {% if ads %}
+    <div class="row g-4">
+      {% for ad in ads %}
+      <div class="col-md-6 col-lg-4">
+        <div class="glass-card investment-card {% if ad.is_expired %}card-expired{% endif %}">
+          <div class="card-img-wrapper">
+            {% if ad.images %}<img src="{{ url_for('uploaded_file', filename=ad.images.split(',')[0]) }}" class="card-img-invest" alt="{{ ad.title }}">
+            {% else %}<img src="{{ url_for('static', filename='img/placeholders/' + ad.category + '.jpg') }}" class="card-img-invest" alt="{{ ad.title }}">{% endif %}
+            {% if ad.is_urgent_sale %}<span class="card-badge" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;font-weight:600">Срочная продажа</span>
+            {% else %}<span class="card-badge badge-{{ ad.risk_level }}">{{ {'low':'Низкий','medium':'Средний','high':'Высокий'}.get(ad.risk_level, ad.risk_level) }}</span>{% endif %}
+            {% if ad.is_expired %}<span class="card-badge-status badge-closed-status">Завершена</span>{% endif %}
+          </div>
+          <div class="card-body-invest">
+            <div class="card-title-invest">{{ ad.title }}</div>
+            <div class="card-meta">
+              <span class="cat-badge">{{ {'realestate':'Недвижимость','auto':'Авто','business':'Бизнес','equipment':'Оборудование','other':'Другое'}.get(ad.category, ad.category) }}</span>
+              <span class="term-info"><i class="far fa-calendar-alt me-1"></i>{{ ad.term_display }}</span>
+            </div>
+            <div class="profit-row">
+              {% if ad.is_urgent_sale %}
+              <div class="profit-item"><span class="profit-label">Цена</span><span class="profit-value" style="color:#f59e0b;font-weight:700">{{ "{:,.0f}".format(ad.price).replace(",", " ") }} ₽</span></div>
+              {% else %}
+              <div class="profit-item"><span class="profit-label">Доходность</span><span class="profit-value text-profit">+{{ ad.expected_profit_pct }}%</span></div>
+              <div class="profit-item"><span class="profit-label">Мин. вход</span><span class="profit-value">{{ "{:,.0f}".format(ad.min_investment).replace(",", " ") }} ₽</span></div>
+              {% endif %}
+            </div>
+            {% if ad.days_remaining is not none and not ad.is_expired %}
+            <div class="days-remaining"><i class="fas fa-hourglass-half me-1"></i>Осталось {{ ad.days_remaining }} дн.</div>
+            {% endif %}
+            {% if not ad.is_urgent_sale %}
+            <div class="pool-progress">
+              <div class="d-flex justify-content-between mb-1"><small class="text-muted-light">Собрано</small><small class="text-muted-light">{{ ad.pool_pct }}%</small></div>
+              <div class="progress-bar-custom"><div class="progress-fill" style="width:{{ ad.pool_pct }}%"></div></div>
+            </div>
+            {% endif %}
+            <a href="{{ url_for('deal_detail', deal_id=ad.id) }}" class="btn btn-accent btn-sm w-100 mt-3">Подробнее</a>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="glass-card text-center py-5"><i class="fas fa-inbox fa-3x mb-3" style="color:var(--text-muted)"></i><h4 style="color:#fff">Нет предложений</h4><p class="text-muted-light">{% if tab == 'closed' %}Нет завершённых сделок{% elif tab == 'active' %}Нет активных сделок{% else %}Новые сделки появятся в ближайшее время{% endif %}</p></div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Вход — InvestPlatform{% endblock %}
+{% block content %}
+<section class="auth-section">
+  <div class="auth-card glass-card">
+    <div class="text-center mb-4">
+      <div class="auth-icon"><i class="fas fa-lock"></i></div>
+      <h3 style="color:#fff; font-weight:700;">Вход в систему</h3>
+      <p class="text-muted-light">Используйте данные, предоставленные администратором</p>
+    </div>
+    <form method="POST" novalidate>
+      {{ form.hidden_tag() }}
+      <div class="mb-3">
+        <label class="form-label">{{ form.username.label.text }}</label>
+        {{ form.username(class="form-control", placeholder="Введите логин", autocomplete="username") }}
+        {% for err in form.username.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+      </div>
+      <div class="mb-3">
+        <label class="form-label">{{ form.password.label.text }}</label>
+        {{ form.password(class="form-control", placeholder="Введите пароль", autocomplete="current-password") }}
+        {% for err in form.password.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+      </div>
+      <button type="submit" class="btn btn-accent w-100 py-2 mt-2"><i class="fas fa-sign-in-alt me-2"></i>Войти</button>
+    </form>
+    <div class="text-center mt-3">
+      <small class="text-muted-light"><i class="fas fa-shield-alt me-1"></i>Защищённое соединение</small>
+    </div>
+  </div>
+</section>
+{% endblock %}

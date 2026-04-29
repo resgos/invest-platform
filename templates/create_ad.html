@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %}Новое предложение — InvestPlatform{% endblock %}
+{% block content %}
+<section class="dashboard-section">
+  <div class="container" style="max-width:900px">
+    <nav class="mb-4"><a href="{{ url_for('admin_dashboard') }}" class="accent-link"><i class="fas fa-arrow-left me-1"></i>К панели администратора</a></nav>
+    <div class="glass-card">
+      <h3 style="color:#fff" class="mb-4"><i class="fas fa-plus-circle me-2"></i>Новое инвестиционное предложение</h3>
+      <form method="POST" enctype="multipart/form-data" novalidate>
+        {{ form.hidden_tag() }}
+        <!-- Deal type -->
+        <div class="row g-3 mb-4">
+          <div class="col-md-6">
+            <label class="form-label">Тип сделки</label>
+            {{ form.deal_type(class="form-select", id="dealTypeSelect") }}
+          </div>
+        </div>
+
+        <!-- Basic info -->
+        <h5 style="color:#fff" class="mb-3"><i class="fas fa-info-circle me-2"></i>Основная информация</h5>
+        <div class="row g-3 mb-4">
+          <div class="col-12">
+            <label class="form-label">Название</label>
+            {{ form.title(class="form-control", placeholder="Квартира в центре Москвы") }}
+            {% for err in form.title.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+          </div>
+          <div class="col-12">
+            <label class="form-label">Описание</label>
+            {{ form.description(class="form-control", rows=4, placeholder="Подробное описание объекта...") }}
+            {% for err in form.description.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Категория</label>
+            {{ form.category(class="form-select", id="categorySelect") }}
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Подкатегория</label>
+            {{ form.subcategory(class="form-control", placeholder="Необязательно") }}
+          </div>
+        </div>
+
+        <!-- Financial -->
+        <h5 style="color:#fff" class="mb-3"><i class="fas fa-ruble-sign me-2"></i>Финансовые параметры</h5>
+        <div class="row g-3 mb-4">
+          <div class="col-md-4">
+            <label class="form-label">Стоимость актива (₽)</label>
+            {{ form.price(class="form-control", placeholder="5 000 000") }}
+            {% for err in form.price.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+          </div>
+          <div class="col-md-4 investment-only-field">
+            <label class="form-label">Доходность (%)</label>
+            {{ form.expected_profit_pct(class="form-control", placeholder="15") }}
+          </div>
+          <div class="col-md-4 investment-only-field">
+            <label class="form-label">Мин. инвестиция (₽)</label>
+            {{ form.min_investment(class="form-control", placeholder="100 000") }}
+          </div>
+          <div class="col-md-4 investment-only-field">
+            <label class="form-label">Общий пул (₽)</label>
+            {{ form.total_pool(class="form-control", placeholder="10 000 000") }}
+          </div>
+          <div class="col-md-4 investment-only-field">
+            <label class="form-label">Уровень риска</label>
+            {{ form.risk_level(class="form-select") }}
+          </div>
+        </div>
+
+        <!-- Term settings -->
+        <div id="investment-term-section">
+        <h5 style="color:#fff" class="mb-3"><i class="fas fa-calendar-alt me-2"></i>Срок инвестиций</h5>
+        <div class="alert glass-alert mb-3" style="border-color:rgba(99,102,241,0.3)">
+          <small><i class="fas fa-info-circle me-1" style="color:var(--accent-light)"></i>
+          Укажите один или несколько вариантов. <b>Дата окончания</b> — все инвестиции до этой даты. <b>Срок в месяцах/днях</b> — каждая инвестиция действует от момента вложения. Если несколько — берётся более ранний срок.</small>
+        </div>
+        <div class="row g-3 mb-4">
+          <div class="col-md-4">
+            <label class="form-label">Дата окончания <small class="text-muted">(необяз.)</small></label>
+            {{ form.date_end(class="form-control", type="date") }}
+            {% for err in form.date_end.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Срок, мес. <small class="text-muted">(необяз.)</small></label>
+            {{ form.investment_term_months(class="form-control", placeholder="12") }}
+            {% for err in form.investment_term_months.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Срок, дн. <small class="text-muted">(необяз.)</small></label>
+            {{ form.investment_term_days(class="form-control", placeholder="90") }}
+            {% for err in form.investment_term_days.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+          </div>
+        </div>
+        </div><!-- /investment-term-section -->
+
+        <!-- Real estate fields -->
+        <div id="realestate-fields" style="display:none">
+          <h5 style="color:#fff" class="mb-3"><i class="fas fa-building me-2"></i>Недвижимость</h5>
+          <div class="row g-3 mb-4">
+            <div class="col-md-4">{{ form.property_type(class="form-control", placeholder="Квартира") }}</div>
+            <div class="col-md-4">{{ form.area(class="form-control", placeholder="Площадь м²") }}</div>
+            <div class="col-md-4">{{ form.rooms(class="form-control", placeholder="Комнат") }}</div>
+            <div class="col-md-4">{{ form.location(class="form-control", placeholder="Москва, ЦАО") }}</div>
+            <div class="col-md-4">{{ form.floor(class="form-control", placeholder="Этаж") }}</div>
+            <div class="col-md-4">{{ form.total_floors(class="form-control", placeholder="Всего этажей") }}</div>
+          </div>
+        </div>
+
+        <!-- Auto fields -->
+        <div id="auto-fields" style="display:none">
+          <h5 style="color:#fff" class="mb-3"><i class="fas fa-car me-2"></i>Автомобиль</h5>
+          <div class="row g-3 mb-4">
+            <div class="col-md-4">{{ form.car_brand(class="form-control", placeholder="BMW") }}</div>
+            <div class="col-md-4">{{ form.car_model(class="form-control", placeholder="X5") }}</div>
+            <div class="col-md-4">{{ form.car_year(class="form-control", placeholder="2024") }}</div>
+            <div class="col-md-4">{{ form.car_power(class="form-control", placeholder="л.с.") }}</div>
+            <div class="col-md-4">{{ form.car_mileage(class="form-control", placeholder="км") }}</div>
+            <div class="col-md-4">{{ form.car_transmission(class="form-select") }}</div>
+            <div class="col-md-4">{{ form.car_fuel(class="form-select") }}</div>
+          </div>
+        </div>
+
+        <!-- Visibility -->
+        <h5 style="color:#fff" class="mb-3"><i class="fas fa-eye me-2"></i>Доступ и видимость</h5>
+        <div class="row g-3 mb-4">
+          <div class="col-md-6">
+            <label class="form-label">Видимость</label>
+            {{ form.visibility(class="form-select", id="visibilitySelect") }}
+          </div>
+          <div class="col-12" id="investorSelector" style="display:none">
+            <label class="form-label">Выберите инвесторов</label>
+            <div class="investor-select-wrapper">
+              <div class="investor-checkboxes">
+                {% for inv in investors %}
+                <label class="investor-checkbox-item">
+                  <input type="checkbox" name="selected_investors" value="{{ inv.id }}">
+                  <div class="investor-info"><span class="investor-name">{{ inv.full_name }}</span><span class="investor-email">{{ inv.email }}</span></div>
+                </label>
+                {% endfor %}
+                {% if not investors %}<p class="text-muted-light text-center py-3">Нет зарегистрированных инвесторов</p>{% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Contact & files -->
+        <div class="row g-3 mb-4">
+          <div class="col-12">
+            <label class="form-label">Контактная информация</label>
+            {{ form.contact_info(class="form-control", rows=2, placeholder="Телефон, email...") }}
+          </div>
+          <div class="col-12">
+            <label class="form-label">Фотографии / документы</label>
+            <input type="file" name="files" class="form-control" multiple accept=".png,.jpg,.jpeg,.gif,.pdf,.doc,.docx">
+            <small class="text-muted">PNG, JPG, PDF, DOC. Макс. 10 МБ</small>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-accent btn-lg"><i class="fas fa-save me-2"></i>Создать предложение</button>
+      </form>
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const cat = document.getElementById('categorySelect');
+    const vis = document.getElementById('visibilitySelect');
+    const dealType = document.getElementById('dealTypeSelect');
+
+    function toggleFields() {
+        document.getElementById('realestate-fields').style.display = cat.value === 'realestate' ? '' : 'none';
+        document.getElementById('auto-fields').style.display = cat.value === 'auto' ? '' : 'none';
+    }
+    function toggleInvestors() {
+        document.getElementById('investorSelector').style.display = vis.value === 'selected' ? '' : 'none';
+    }
+    function toggleDealType() {
+        const isUrgent = dealType.value === 'urgent_sale';
+        document.querySelectorAll('.investment-only-field').forEach(el => el.style.display = isUrgent ? 'none' : '');
+        document.getElementById('investment-term-section').style.display = isUrgent ? 'none' : '';
+    }
+    cat.addEventListener('change', toggleFields);
+    vis.addEventListener('change', toggleInvestors);
+    dealType.addEventListener('change', toggleDealType);
+    toggleFields();
+    toggleInvestors();
+    toggleDealType();
+});
+</script>
+{% endblock %}

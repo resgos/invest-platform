@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Создать аккаунт — InvestPlatform{% endblock %}
+{% block content %}
+<section class="dashboard-section">
+  <div class="container" style="max-width:700px">
+    <nav class="mb-4"><a href="{{ url_for('admin_users') }}" class="accent-link"><i class="fas fa-arrow-left me-1"></i>К списку пользователей</a></nav>
+    <div class="glass-card">
+      <h3 style="color:#fff" class="mb-4"><i class="fas fa-user-plus me-2"></i>Создать аккаунт</h3>
+      <form method="POST" novalidate>
+        {{ form.hidden_tag() }}
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">{{ form.full_name.label.text }}</label>
+            {{ form.full_name(class="form-control", placeholder="Иванов Иван Иванович") }}
+            {% for err in form.full_name.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">{{ form.username.label.text }}</label>
+            {{ form.username(class="form-control", placeholder="ivanov") }}
+            {% for err in form.username.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">{{ form.email.label.text }}</label>
+            {{ form.email(class="form-control", placeholder="ivanov@mail.ru") }}
+            {% for err in form.email.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">{{ form.phone.label.text }}</label>
+            {{ form.phone(class="form-control", placeholder="+7 900 123-45-67") }}
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">{{ form.password.label.text }}</label>
+            {{ form.password(class="form-control", placeholder="Мин. 8 символов") }}
+            {% for err in form.password.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+            <small class="text-muted">Заглавная + строчная + цифра</small>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">{{ form.role.label.text }}</label>
+            {{ form.role(class="form-select") }}
+          </div>
+        </div>
+        <button type="submit" class="btn btn-accent mt-4"><i class="fas fa-save me-2"></i>Создать пользователя</button>
+      </form>
+    </div>
+  </div>
+</section>
+{% endblock %}

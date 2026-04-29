@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Заявки на инвестиции — InvestPlatform{% endblock %}
+{% block content %}
+<section class="dashboard-section">
+  <div class="container">
+    <div class="dashboard-header">
+      <div>
+        <h1><i class="fas fa-clock me-2"></i>Заявки на инвестиции</h1>
+        <p class="text-muted-light">Ожидают подтверждения администратором</p>
+      </div>
+      <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-accent"><i class="fas fa-arrow-left me-2"></i>Назад</a>
+    </div>
+
+    {% if pending %}
+    <div class="glass-card">
+      <div class="table-responsive">
+        <table class="table table-dark-custom">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Инвестор</th>
+              <th>Телефон</th>
+              <th>Сделка</th>
+              <th>Категория</th>
+              <th>Сумма</th>
+              <th>Ожид. прибыль</th>
+              <th>Дата заявки</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv, user, deal in pending %}
+            <tr>
+              <td>{{ inv.id }}</td>
+              <td>
+                <div style="font-weight:600;color:#fff">{{ user.full_name }}</div>
+                <small class="text-muted-light">{{ user.email }}</small>
+              </td>
+              <td>{{ user.phone or '—' }}</td>
+              <td><a href="{{ url_for('deal_detail', deal_id=deal.id) }}" class="accent-link">{{ deal.title }}</a></td>
+              <td><span class="cat-badge">{{ {'realestate':'Недвижимость','auto':'Авто','business':'Бизнес','equipment':'Оборудование','other':'Другое'}.get(deal.category, deal.category) }}</span></td>
+              <td style="font-weight:700;color:#fff">{{ "{:,.0f}".format(inv.amount).replace(",", " ") }} ₽</td>
+              <td class="text-profit">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</td>
+              <td>{{ inv.invested_at.strftime('%d.%m.%Y %H:%M') if inv.invested_at else '—' }}</td>
+              <td>
+                <div class="d-flex gap-2">
+                  <form method="POST" action="{{ url_for('confirm_investment', inv_id=inv.id) }}" onsubmit="return confirm('Подтвердить инвестицию?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-success" title="Подтвердить">
+                      <i class="fas fa-check me-1"></i>Подтвердить
+                    </button>
+                  </form>
+                  <button type="button" class="btn btn-sm btn-outline-danger" title="Отклонить" 
+                          data-inv-id="{{ inv.id }}" data-investor="{{ user.full_name }}" data-deal="{{ deal.title }}" data-amount="{{ inv.amount }}"
+                          onclick="showRejectModal(this)">
+                    <i class="fas fa-times me-1"></i>Отклонить
+                  </button>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="glass-card text-center py-5">
+      <i class="fas fa-check-circle fa-3x mb-3" style="color:var(--profit-color)"></i>
+      <h4 style="color:#fff">Нет ожидающих заявок</h4>
+      <p class="text-muted-light">Все заявки на инвестиции обработаны</p>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<!-- Reject Modal -->
+<div class="modal fade" id="rejectModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border-color)">
+      <div class="modal-header" style="border-color:var(--border-color)">
+        <h5 class="modal-title" style="color:#fff"><i class="fas fa-times-circle me-2 text-danger"></i>Отклонение заявки</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="rejectForm" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body">
+          <p class="text-muted-light mb-3" id="rejectInfo"></p>
+          <div class="mb-3">
+            <label for="rejectReason" class="form-label" style="color:#fff">Причина отклонения (необязательно)</label>
+            <textarea name="reason" id="rejectReason" class="form-control" rows="3" placeholder="Укажите причину отклонения..."
+                      style="background:var(--bg-primary);border-color:var(--border-color);color:#fff"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer" style="border-color:var(--border-color)">
+          <button type="button" class="btn btn-outline-accent" data-bs-dismiss="modal">Отмена</button>
+          <button type="submit" class="btn btn-danger"><i class="fas fa-times me-1"></i>Отклонить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function showRejectModal(btn) {
+  var invId = btn.getAttribute('data-inv-id');
+  var investorName = btn.getAttribute('data-investor');
+  var dealTitle = btn.getAttribute('data-deal');
+  var amount = parseFloat(btn.getAttribute('data-amount')).toLocaleString('ru-RU');
+  document.getElementById('rejectInfo').textContent = 
+    'Отклонить заявку от ' + investorName + ' на ' + amount + ' ₽ в сделку «' + dealTitle + '»?';
+  document.getElementById('rejectForm').action = '/admin/investments/' + invId + '/reject';
+  document.getElementById('rejectReason').value = '';
+  new bootstrap.Modal(document.getElementById('rejectModal')).show();
+}
+</script>
+{% endblock %}
