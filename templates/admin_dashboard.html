@@ -191,7 +191,7 @@
         {% if inv.status == 'active' %}
         <div class="modal fade" id="closeInvModal{{ inv.id }}" tabindex="-1" aria-hidden="true">
           <div class="modal-dialog modal-dialog-centered">
-            <form method="POST" action="{{ url_for('close_investment', inv_id=inv.id) }}" class="modal-content glass-card" style="background:#1a1f2e;border:1px solid rgba(255,255,255,0.1)">
+            <form method="POST" action="{{ url_for('close_investment', inv_id=inv.id) }}" class="modal-content glass-card close-inv-form" style="background:#1a1f2e;border:1px solid rgba(255,255,255,0.1)" data-inv-id="{{ inv.id }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <div class="modal-header" style="border-bottom:1px solid rgba(255,255,255,0.1)">
                 <h5 class="modal-title" style="color:#fff"><i class="fas fa-flag-checkered me-2" style="color:#f59e0b"></i>Закрытие инвестиции</h5>
@@ -201,9 +201,37 @@
                 <p class="mb-2"><b style="color:#fff">{{ user.full_name or user.username }}</b> — {{ deal.title }}</p>
                 <p class="mb-2">Сумма вложения: <span style="color:#fff">{{ "{:,.0f}".format(inv.amount).replace(",", " ") }} ₽</span></p>
                 <p class="mb-3">Ожидаемая прибыль на сегодня: <span class="text-profit">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span></p>
-                <label class="form-label">Фактическая выплаченная прибыль (₽)</label>
-                <input type="number" name="actual_profit" value="{{ inv.actual_profit|int if inv.actual_profit else inv.expected_profit|int }}" class="form-control" min="0" step="100" required>
-                <small class="text-muted-light d-block mt-2"><i class="fas fa-info-circle me-1"></i>Инвестиция будет переведена в статус «Закрыта». Дата окончания зафиксируется сегодняшней датой. Инвестор увидит сделку в разделе «Закрытые».</small>
+
+                {# Переключатель режима закрытия #}
+                <label class="form-label fw-semibold" style="color:#fff">Вариант закрытия</label>
+                <div class="btn-group w-100 mb-3" role="group">
+                  <input type="radio" class="btn-check close-mode-radio" name="close_mode" value="expected" id="closeModeExpected{{ inv.id }}" autocomplete="off" checked>
+                  <label class="btn btn-outline-success" for="closeModeExpected{{ inv.id }}">
+                    <i class="fas fa-clock me-1"></i>С ожидаемой прибылью
+                  </label>
+                  <input type="radio" class="btn-check close-mode-radio" name="close_mode" value="custom" id="closeModeCustom{{ inv.id }}" autocomplete="off">
+                  <label class="btn btn-outline-warning" for="closeModeCustom{{ inv.id }}">
+                    <i class="fas fa-pen me-1"></i>Своя сумма
+                  </label>
+                </div>
+
+                {# Блок "С ожидаемой" — авто-расчёт pro-rata, поле disabled #}
+                <div class="close-mode-block close-mode-expected">
+                  <div class="alert" style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);color:#cbd5e1">
+                    <i class="fas fa-info-circle me-1" style="color:#10b981"></i>
+                    Прибыль будет рассчитана автоматически (pro-rata) от даты начала до сегодняшней даты по ставке сделки.
+                    <div class="mt-2">К выплате расчётно: <span class="text-profit fw-semibold">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span></div>
+                  </div>
+                </div>
+
+                {# Блок "Кастомная сумма" — поле включается #}
+                <div class="close-mode-block close-mode-custom" style="display:none">
+                  <label class="form-label">Фактическая выплаченная прибыль (₽)</label>
+                  <input type="number" name="actual_profit" value="{{ inv.actual_profit|int if inv.actual_profit else inv.expected_profit|int }}" class="form-control close-actual-profit" min="0" step="100" disabled>
+                  <small class="text-muted-light d-block mt-2"><i class="fas fa-info-circle me-1"></i>Введите сумму фактически выплаченной прибыли — заменит расчётную.</small>
+                </div>
+
+                <small class="text-muted-light d-block mt-3"><i class="fas fa-flag-checkered me-1"></i>Инвестиция будет переведена в статус «Закрыта». Дата окончания зафиксируется сегодняшней датой. Инвестор увидит сделку в разделе «Закрытые».</small>
               </div>
               <div class="modal-footer" style="border-top:1px solid rgba(255,255,255,0.1)">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
@@ -214,6 +242,32 @@
         </div>
         {% endif %}
       {% endfor %}
+
+      {# JS-переключение блоков выбора режима закрытия #}
+      <script>
+      (function() {
+        document.querySelectorAll('form.close-inv-form').forEach(function(form) {
+          var radios = form.querySelectorAll('.close-mode-radio');
+          var blockExp = form.querySelector('.close-mode-expected');
+          var blockCust = form.querySelector('.close-mode-custom');
+          var inputProfit = form.querySelector('.close-actual-profit');
+          function update() {
+            var val = form.querySelector('.close-mode-radio:checked').value;
+            if (val === 'custom') {
+              if (blockExp) blockExp.style.display = 'none';
+              if (blockCust) blockCust.style.display = 'block';
+              if (inputProfit) { inputProfit.disabled = false; inputProfit.required = true; }
+            } else {
+              if (blockExp) blockExp.style.display = 'block';
+              if (blockCust) blockCust.style.display = 'none';
+              if (inputProfit) { inputProfit.disabled = true; inputProfit.required = false; }
+            }
+          }
+          radios.forEach(function(r) { r.addEventListener('change', update); });
+          update();
+        });
+      })();
+      </script>
     </div>
     {% endif %}
   </div>

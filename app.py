@@ -1243,12 +1243,30 @@ def create_app():
             flash('Можно закрыть только активную или ожидающую инвестицию', 'warning')
             return redirect(request.referrer or url_for('admin_dashboard'))
 
+        # Режим закрытия: 'expected' — авто pro-rata, 'custom' — введённая вручную сумма
+        close_mode = (request.form.get('close_mode') or '').strip().lower()
         actual_profit_str = request.form.get('actual_profit', '').strip()
-        # Если прибыль не указана явно — берём текущую actual_profit или pro-rata от ставки
-        if actual_profit_str:
+
+        # Автовыбор режима для обратной совместимости:
+        # если режим явно не передан, но есть число — считаем это custom
+        if close_mode not in ('expected', 'custom'):
+            close_mode = 'custom' if actual_profit_str else 'expected'
+
+        if close_mode == 'custom':
+            if not actual_profit_str:
+                flash('Укажите сумму фактической прибыли', 'danger')
+                return redirect(request.referrer or url_for('admin_dashboard'))
             actual_profit = safe_float(actual_profit_str)
         else:
-            actual_profit = inv.actual_profit or 0
+            # Расчёт pro-rata от даты начала инвестиции до сегодня
+            from datetime import date as _date
+            today_d = _date.today()
+            start_d = inv.deal.date_start or (inv.invested_at.date() if inv.invested_at else today_d)
+            days_passed = max((today_d - start_d).days, 1)
+            pct = inv.deal_profit_pct or inv.deal.expected_profit_pct or 0
+            calc_profit = round(inv.amount * (pct / 100) * (days_passed / 365), 2)
+            # Из calc_profit или уже выплаченной берём максимум — на случай если ранее выплатили больше
+            actual_profit = max(calc_profit, inv.actual_profit or 0)
 
         if actual_profit < 0:
             flash('Прибыль не может быть отрицательной', 'danger')
