@@ -95,6 +95,8 @@
 
     {% if recent_investments %}
     <div class="glass-card"><h4 class="mb-3"><i class="fas fa-money-bill-wave me-2"></i>Инвестиции{% if date_from or date_to %} за период{% endif %}</h4>
+      {# На широких экранах — таблица, на мобильных — карточки #}
+      <div class="d-none d-lg-block">
       <div class="table-responsive"><table class="table table-dark-custom"><thead><tr><th>Инвестор</th><th>Объект</th><th>Сумма</th><th>Ожид. прибыль</th><th>Получено</th><th>Статус</th><th>Дата</th><th>Действие</th></tr></thead><tbody>
         {% for inv, user, deal in recent_investments %}<tr>
           <td>{{ user.full_name or user.username }}</td><td>{{ deal.title }}</td>
@@ -118,11 +120,12 @@
           <td>{{ inv.invested_at.strftime('%d.%m.%Y') if inv.invested_at else '—' }}</td>
           <td>
             {% if inv.status in ['active', 'closed'] %}
-            <div class="d-flex gap-1 align-items-center" style="min-width:200px">
-              <form method="POST" action="{{ url_for('update_actual_profit', inv_id=inv.id) }}" class="d-flex gap-1 align-items-center">
+            <div class="d-flex gap-1 align-items-center" style="min-width:240px">
+              <form method="POST" action="{{ url_for('update_actual_profit', inv_id=inv.id) }}" class="d-flex gap-1 align-items-center" title="Обновить фактическую выплаченную прибыль">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="number" name="actual_profit" value="{{ inv.actual_profit|int }}" class="form-control form-control-sm" style="width:100px;font-size:0.8rem" min="0" step="100">
-                <button type="submit" class="btn btn-sm btn-outline-accent" title="Обновить прибыль"><i class="fas fa-save"></i></button>
+                <span class="text-muted-light" style="font-size:0.75rem;white-space:nowrap">Прибыль ₽:</span>
+                <input type="number" name="actual_profit" value="{{ inv.actual_profit|int }}" class="form-control form-control-sm" style="width:100px;font-size:0.8rem" min="0" step="100" placeholder="0">
+                <button type="submit" class="btn btn-sm btn-outline-accent" title="Сохранить"><i class="fas fa-save"></i></button>
               </form>
               {% if inv.status == 'active' %}
               <button type="button" class="btn btn-sm btn-outline-warning"
@@ -130,36 +133,87 @@
                       title="Закрыть инвестицию"><i class="fas fa-flag-checkered"></i></button>
               {% endif %}
             </div>
-            {% if inv.status == 'active' %}
-            <!-- Modal: закрытие инвестиции -->
-            <div class="modal fade" id="closeInvModal{{ inv.id }}" tabindex="-1" aria-hidden="true">
-              <div class="modal-dialog modal-dialog-centered">
-                <form method="POST" action="{{ url_for('close_investment', inv_id=inv.id) }}" class="modal-content glass-card" style="background:#1a1f2e;border:1px solid rgba(255,255,255,0.1)">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <div class="modal-header" style="border-bottom:1px solid rgba(255,255,255,0.1)">
-                    <h5 class="modal-title" style="color:#fff"><i class="fas fa-flag-checkered me-2" style="color:#f59e0b"></i>Закрытие инвестиции</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                  </div>
-                  <div class="modal-body" style="color:#cbd5e1">
-                    <p class="mb-2"><b style="color:#fff">{{ user.full_name or user.username }}</b> — {{ deal.title }}</p>
-                    <p class="mb-2">Сумма вложения: <span style="color:#fff">{{ "{:,.0f}".format(inv.amount).replace(",", " ") }} ₽</span></p>
-                    <p class="mb-3">Ожидаемая прибыль на сегодня: <span class="text-profit">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span></p>
-                    <label class="form-label">Фактическая выплаченная прибыль (₽)</label>
-                    <input type="number" name="actual_profit" value="{{ inv.actual_profit|int if inv.actual_profit else inv.expected_profit|int }}" class="form-control" min="0" step="100" required>
-                    <small class="text-muted-light d-block mt-2"><i class="fas fa-info-circle me-1"></i>Инвестиция будет переведена в статус «Закрыта». Дата окончания зафиксируется сегодняшней датой. Инвестор увидит сделку в разделе «Закрытые».</small>
-                  </div>
-                  <div class="modal-footer" style="border-top:1px solid rgba(255,255,255,0.1)">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-warning"><i class="fas fa-flag-checkered me-2"></i>Закрыть</button>
-                  </div>
-                </form>
-              </div>
-            </div>
-            {% endif %}
             {% else %}—{% endif %}
           </td>
         </tr>{% endfor %}
       </tbody></table></div>
+      </div>{# /d-none d-lg-block #}
+
+      {# МОБИЛЬНЫЙ ВИД: карточки #}
+      <div class="d-block d-lg-none">
+        {% for inv, user, deal in recent_investments %}
+        <div class="glass-card mb-3" style="padding:14px;background:rgba(255,255,255,0.03)">
+          <div class="d-flex justify-content-between align-items-start mb-2" style="gap:8px">
+            <div style="min-width:0;flex:1">
+              <div style="color:#fff;font-weight:600;font-size:0.95rem;line-height:1.3">{{ user.full_name or user.username }}</div>
+              <div class="text-muted-light" style="font-size:0.8rem;line-height:1.3">{{ deal.title }}</div>
+            </div>
+            <div>
+              {% if inv.status == 'pending' %}<span class="badge bg-warning text-dark">Ожид.</span>
+              {% elif inv.status == 'active' %}<span class="badge bg-success-glow">Актив</span>
+              {% elif inv.status == 'rejected' %}<span class="badge bg-danger">Откл.</span>
+              {% elif inv.status == 'closed' %}<span class="badge bg-secondary">Закрыта</span>
+              {% else %}<span class="badge bg-secondary">{{ inv.status }}</span>{% endif %}
+            </div>
+          </div>
+          <div class="row g-2 mb-2" style="font-size:0.85rem">
+            <div class="col-6"><span class="text-muted-light">Сумма:</span><br><b style="color:#fff">{{ "{:,.0f}".format(inv.amount).replace(",", " ") }} ₽</b></div>
+            <div class="col-6"><span class="text-muted-light">Ожид. прибыль:</span><br><span class="text-profit" style="font-weight:600">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span></div>
+            <div class="col-6"><span class="text-muted-light">Получено:</span><br>
+              {% if inv.actual_profit > 0 %}<span style="color:#10b981;font-weight:600">+{{ "{:,.0f}".format(inv.actual_profit).replace(",", " ") }} ₽</span>
+              {% else %}<span class="text-muted">0 ₽</span>{% endif %}
+            </div>
+            <div class="col-6"><span class="text-muted-light">Дата:</span><br><span style="color:#fff">{{ inv.invested_at.strftime('%d.%m.%Y') if inv.invested_at else '—' }}</span></div>
+          </div>
+          {% if inv.status in ['active', 'closed'] %}
+          <div class="mt-2 pt-2" style="border-top:1px solid rgba(255,255,255,0.08)">
+            <form method="POST" action="{{ url_for('update_actual_profit', inv_id=inv.id) }}" class="d-flex gap-2 align-items-end">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div style="flex:1">
+                <label class="form-label" style="font-size:0.75rem;color:#94a3b8;margin-bottom:2px"><i class="fas fa-coins me-1"></i>Выплаченная прибыль (₽)</label>
+                <input type="number" name="actual_profit" value="{{ inv.actual_profit|int }}" class="form-control form-control-sm" min="0" step="100" placeholder="0">
+              </div>
+              <button type="submit" class="btn btn-sm btn-outline-accent" title="Сохранить"><i class="fas fa-save"></i></button>
+              {% if inv.status == 'active' %}
+              <button type="button" class="btn btn-sm btn-warning"
+                      data-bs-toggle="modal" data-bs-target="#closeInvModal{{ inv.id }}"
+                      title="Закрыть"><i class="fas fa-flag-checkered"></i></button>
+              {% endif %}
+            </form>
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>{# /d-block d-lg-none #}
+
+      {# Модалки закрытия — вынесены вне таблиц чтобы работать и в десктопе, и на мобильном #}
+      {% for inv, user, deal in recent_investments %}
+        {% if inv.status == 'active' %}
+        <div class="modal fade" id="closeInvModal{{ inv.id }}" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog modal-dialog-centered">
+            <form method="POST" action="{{ url_for('close_investment', inv_id=inv.id) }}" class="modal-content glass-card" style="background:#1a1f2e;border:1px solid rgba(255,255,255,0.1)">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="modal-header" style="border-bottom:1px solid rgba(255,255,255,0.1)">
+                <h5 class="modal-title" style="color:#fff"><i class="fas fa-flag-checkered me-2" style="color:#f59e0b"></i>Закрытие инвестиции</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+              </div>
+              <div class="modal-body" style="color:#cbd5e1">
+                <p class="mb-2"><b style="color:#fff">{{ user.full_name or user.username }}</b> — {{ deal.title }}</p>
+                <p class="mb-2">Сумма вложения: <span style="color:#fff">{{ "{:,.0f}".format(inv.amount).replace(",", " ") }} ₽</span></p>
+                <p class="mb-3">Ожидаемая прибыль на сегодня: <span class="text-profit">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span></p>
+                <label class="form-label">Фактическая выплаченная прибыль (₽)</label>
+                <input type="number" name="actual_profit" value="{{ inv.actual_profit|int if inv.actual_profit else inv.expected_profit|int }}" class="form-control" min="0" step="100" required>
+                <small class="text-muted-light d-block mt-2"><i class="fas fa-info-circle me-1"></i>Инвестиция будет переведена в статус «Закрыта». Дата окончания зафиксируется сегодняшней датой. Инвестор увидит сделку в разделе «Закрытые».</small>
+              </div>
+              <div class="modal-footer" style="border-top:1px solid rgba(255,255,255,0.1)">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="submit" class="btn btn-warning"><i class="fas fa-flag-checkered me-2"></i>Закрыть</button>
+              </div>
+            </form>
+          </div>
+        </div>
+        {% endif %}
+      {% endfor %}
     </div>
     {% endif %}
   </div>
