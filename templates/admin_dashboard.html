@@ -124,7 +124,7 @@
               <form method="POST" action="{{ url_for('update_actual_profit', inv_id=inv.id) }}" class="d-flex gap-1 align-items-center" title="Обновить фактическую выплаченную прибыль">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <span class="text-muted-light" style="font-size:0.75rem;white-space:nowrap">Прибыль ₽:</span>
-                <input type="number" name="actual_profit" value="{{ inv.actual_profit|int }}" class="form-control form-control-sm" style="width:100px;font-size:0.8rem" min="0" step="100" placeholder="0">
+                <input type="number" name="actual_profit" value="{{ inv.actual_profit|int }}" class="form-control form-control-sm" style="width:110px;font-size:0.8rem" min="0" step="any" inputmode="decimal" placeholder="0">
                 <button type="submit" class="btn btn-sm btn-outline-accent" title="Сохранить"><i class="fas fa-save"></i></button>
               </form>
               {% if inv.status == 'active' %}
@@ -171,7 +171,7 @@
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <div style="flex:1">
                 <label class="form-label" style="font-size:0.75rem;color:#94a3b8;margin-bottom:2px"><i class="fas fa-coins me-1"></i>Выплаченная прибыль (₽)</label>
-                <input type="number" name="actual_profit" value="{{ inv.actual_profit|int }}" class="form-control form-control-sm" min="0" step="100" placeholder="0">
+                <input type="number" name="actual_profit" value="{{ inv.actual_profit|int }}" class="form-control form-control-sm" min="0" step="any" inputmode="decimal" placeholder="0">
               </div>
               <button type="submit" class="btn btn-sm btn-outline-accent" title="Сохранить"><i class="fas fa-save"></i></button>
               {% if inv.status == 'active' %}
@@ -244,7 +244,8 @@
                 {# Блок "Кастомная сумма" — поле включается #}
                 <div class="close-mode-block close-mode-custom mt-3" style="display:none">
                   <label class="form-label">Фактическая выплаченная прибыль (₽)</label>
-                  <input type="number" name="actual_profit" value="{{ inv.actual_profit|int if inv.actual_profit else inv.expected_profit|int }}" class="form-control close-actual-profit" min="0" step="100" disabled>
+                  <input type="number" name="actual_profit" value="{{ inv.actual_profit|int if inv.actual_profit else inv.expected_profit|int }}" class="form-control close-actual-profit" min="0" step="any" inputmode="decimal" placeholder="например, 125000" disabled>
+                  <small class="text-muted-light d-block mt-2" style="font-size:0.78rem"><i class="fas fa-info-circle me-1"></i>Любое число. Можно с копейками. Запятая или точка — оба варианта работают.</small>
                 </div>
 
                 <small class="text-muted-light d-block mt-3" style="font-size:0.78rem"><i class="fas fa-info-circle me-1"></i>Статус → «Закрыта», дата окончания — сегодня. Инвестор увидит сделку в разделе «Закрытые».</small>

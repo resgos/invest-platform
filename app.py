@@ -130,8 +130,23 @@ def create_app():
         db.session.commit()
 
     def safe_float(val, default=0):
+        """Парсит число из пользовательского ввода. Поддерживает оба формата:
+           '12345.50' (англ.) и '12345,50' (рус.). Пробелы и неразрывные пробелы
+           удаляются. Запятая — десятичный разделитель, если в строке нет точки;
+           иначе считается thousand-separator и удаляется.
+        """
         try:
-            return float(str(val).replace(' ', '').replace(',', ''))
+            s = str(val).strip().replace(' ', '').replace('\xa0', '')
+            if '.' in s:
+                # есть точка — десятичный, запятые = thousand-separator
+                s = s.replace(',', '')
+            elif s.count(',') == 1:
+                # одна запятая без точки — это десятичный разделитель (рус. формат)
+                s = s.replace(',', '.')
+            else:
+                # несколько запятых = thousand-separator
+                s = s.replace(',', '')
+            return float(s)
         except (ValueError, TypeError):
             return default
 
