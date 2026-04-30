@@ -253,25 +253,63 @@ document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('.modal[id^="closeInvModal"]').forEach(function (m) {
         if (m.parentElement !== document.body) document.body.appendChild(m);
     });
-    // Переключение режима закрытия (По расчёту / Своя сумма)
+    // Переключение режима закрытия (По расчёту / Своя сумма).
+    // Делаем явный клик по карточке через JS — label[for=...] может ломаться
+    // после перемещения модалки в body (если id внутри shadow scope или конфликт).
     document.querySelectorAll('form.close-inv-form').forEach(function (form) {
         var radios = form.querySelectorAll('.close-mode-radio');
+        var cards = form.querySelectorAll('.close-mode-card');
         var blockExp = form.querySelector('.close-mode-expected');
         var blockCust = form.querySelector('.close-mode-custom');
         var inputProfit = form.querySelector('.close-actual-profit');
+
         function update() {
             var checked = form.querySelector('.close-mode-radio:checked');
             var val = checked ? checked.value : 'expected';
             if (val === 'custom') {
                 if (blockExp) blockExp.style.display = 'none';
                 if (blockCust) blockCust.style.display = 'block';
-                if (inputProfit) { inputProfit.disabled = false; inputProfit.required = true; }
+                if (inputProfit) {
+                    inputProfit.disabled = false;
+                    inputProfit.required = true;
+                    // Фокус на поле ввода — ускоряем юзеру жизнь
+                    setTimeout(function () { inputProfit.focus(); inputProfit.select(); }, 50);
+                }
             } else {
                 if (blockExp) blockExp.style.display = 'block';
                 if (blockCust) blockCust.style.display = 'none';
                 if (inputProfit) { inputProfit.disabled = true; inputProfit.required = false; }
             }
         }
+
+        // Клик по любой части карточки (включая иконку, заголовок, галку)
+        // переключает соответствующий radio. Это надёжнее, чем label[for=...]
+        // когда DOM перемещается.
+        cards.forEach(function (card) {
+            card.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                // Находим radio внутри той же группы — соседний элемент перед label
+                // (структура: <input.close-mode-radio> + <label.close-mode-card>)
+                var radio = card.previousElementSibling;
+                if (radio && radio.classList.contains('close-mode-radio')) {
+                    if (!radio.checked) {
+                        radio.checked = true;
+                        update();
+                    }
+                }
+            });
+            // Доступность: tabindex + Enter/Space
+            card.setAttribute('tabindex', '0');
+            card.setAttribute('role', 'radio');
+            card.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    card.click();
+                }
+            });
+        });
+
         radios.forEach(function (r) { r.addEventListener('change', update); });
         update();
     });
