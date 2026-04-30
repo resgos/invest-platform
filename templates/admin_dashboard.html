@@ -190,48 +190,64 @@
       {% for inv, user, deal in recent_investments %}
         {% if inv.status == 'active' %}
         <div class="modal fade" id="closeInvModal{{ inv.id }}" tabindex="-1" aria-hidden="true">
-          <div class="modal-dialog modal-dialog-centered">
-            <form method="POST" action="{{ url_for('close_investment', inv_id=inv.id) }}" class="modal-content glass-card close-inv-form" style="background:#1a1f2e;border:1px solid rgba(255,255,255,0.1)" data-inv-id="{{ inv.id }}">
+          <div class="modal-dialog modal-dialog-centered close-inv-dialog">
+            <form method="POST" action="{{ url_for('close_investment', inv_id=inv.id) }}" class="modal-content close-inv-form" data-inv-id="{{ inv.id }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <div class="modal-header" style="border-bottom:1px solid rgba(255,255,255,0.1)">
                 <h5 class="modal-title" style="color:#fff"><i class="fas fa-flag-checkered me-2" style="color:#f59e0b"></i>Закрытие инвестиции</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
               </div>
               <div class="modal-body" style="color:#cbd5e1">
-                <p class="mb-2"><b style="color:#fff">{{ user.full_name or user.username }}</b> — {{ deal.title }}</p>
-                <p class="mb-2">Сумма вложения: <span style="color:#fff">{{ "{:,.0f}".format(inv.amount).replace(",", " ") }} ₽</span></p>
-                <p class="mb-3">Ожидаемая прибыль на сегодня: <span class="text-profit">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span></p>
+                <div class="mb-3 p-3" style="background:rgba(255,255,255,0.03);border-radius:10px;border:1px solid rgba(255,255,255,0.06)">
+                  <div style="color:#fff;font-weight:600;margin-bottom:6px">{{ user.full_name or user.username }}</div>
+                  <div style="color:#94a3b8;font-size:0.85rem;margin-bottom:10px">{{ deal.title }}</div>
+                  <div class="d-flex justify-content-between" style="font-size:0.88rem">
+                    <span style="color:#94a3b8">Сумма вложения</span>
+                    <span style="color:#fff;font-weight:600">{{ "{:,.0f}".format(inv.amount).replace(",", " ") }} ₽</span>
+                  </div>
+                  <div class="d-flex justify-content-between mt-1" style="font-size:0.88rem">
+                    <span style="color:#94a3b8">Ожидаемая прибыль на сегодня</span>
+                    <span class="text-profit fw-semibold">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span>
+                  </div>
+                </div>
 
-                {# Переключатель режима закрытия #}
-                <label class="form-label fw-semibold" style="color:#fff">Вариант закрытия</label>
-                <div class="btn-group w-100 mb-3" role="group">
-                  <input type="radio" class="btn-check close-mode-radio" name="close_mode" value="expected" id="closeModeExpected{{ inv.id }}" autocomplete="off" checked>
-                  <label class="btn btn-outline-success" for="closeModeExpected{{ inv.id }}">
-                    <i class="fas fa-clock me-1"></i>С ожидаемой прибылью
+                {# Переключатель режима закрытия — карточки-радио #}
+                <div class="close-mode-cards" role="radiogroup">
+                  <input type="radio" class="close-mode-radio" name="close_mode" value="expected" id="closeModeExpected{{ inv.id }}" autocomplete="off" checked>
+                  <label for="closeModeExpected{{ inv.id }}" class="close-mode-card">
+                    <div class="close-mode-card-icon" style="background:rgba(16,185,129,0.15);color:#10b981"><i class="fas fa-clock"></i></div>
+                    <div class="close-mode-card-text">
+                      <div class="close-mode-card-title">По расчёту</div>
+                      <div class="close-mode-card-sub">Авто по ставке</div>
+                    </div>
+                    <i class="fas fa-check-circle close-mode-card-tick"></i>
                   </label>
-                  <input type="radio" class="btn-check close-mode-radio" name="close_mode" value="custom" id="closeModeCustom{{ inv.id }}" autocomplete="off">
-                  <label class="btn btn-outline-warning" for="closeModeCustom{{ inv.id }}">
-                    <i class="fas fa-pen me-1"></i>Своя сумма
+                  <input type="radio" class="close-mode-radio" name="close_mode" value="custom" id="closeModeCustom{{ inv.id }}" autocomplete="off">
+                  <label for="closeModeCustom{{ inv.id }}" class="close-mode-card">
+                    <div class="close-mode-card-icon" style="background:rgba(245,158,11,0.15);color:#f59e0b"><i class="fas fa-pen"></i></div>
+                    <div class="close-mode-card-text">
+                      <div class="close-mode-card-title">Своя сумма</div>
+                      <div class="close-mode-card-sub">Ввести вручную</div>
+                    </div>
+                    <i class="fas fa-check-circle close-mode-card-tick"></i>
                   </label>
                 </div>
 
                 {# Блок "С ожидаемой" — авто-расчёт pro-rata, поле disabled #}
-                <div class="close-mode-block close-mode-expected">
-                  <div class="alert" style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);color:#cbd5e1">
-                    <i class="fas fa-info-circle me-1" style="color:#10b981"></i>
-                    Прибыль будет рассчитана автоматически (pro-rata) от даты начала до сегодняшней даты по ставке сделки.
-                    <div class="mt-2">К выплате расчётно: <span class="text-profit fw-semibold">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span></div>
+                <div class="close-mode-block close-mode-expected mt-3">
+                  <div class="close-summary">
+                    <span>К выплате расчётно:</span>
+                    <span class="text-profit fw-semibold">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span>
                   </div>
                 </div>
 
                 {# Блок "Кастомная сумма" — поле включается #}
-                <div class="close-mode-block close-mode-custom" style="display:none">
+                <div class="close-mode-block close-mode-custom mt-3" style="display:none">
                   <label class="form-label">Фактическая выплаченная прибыль (₽)</label>
                   <input type="number" name="actual_profit" value="{{ inv.actual_profit|int if inv.actual_profit else inv.expected_profit|int }}" class="form-control close-actual-profit" min="0" step="100" disabled>
-                  <small class="text-muted-light d-block mt-2"><i class="fas fa-info-circle me-1"></i>Введите сумму фактически выплаченной прибыли — заменит расчётную.</small>
                 </div>
 
-                <small class="text-muted-light d-block mt-3"><i class="fas fa-flag-checkered me-1"></i>Инвестиция будет переведена в статус «Закрыта». Дата окончания зафиксируется сегодняшней датой. Инвестор увидит сделку в разделе «Закрытые».</small>
+                <small class="text-muted-light d-block mt-3" style="font-size:0.78rem"><i class="fas fa-info-circle me-1"></i>Статус → «Закрыта», дата окончания — сегодня. Инвестор увидит сделку в разделе «Закрытые».</small>
               </div>
               <div class="modal-footer" style="border-top:1px solid rgba(255,255,255,0.1)">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
@@ -243,31 +259,55 @@
         {% endif %}
       {% endfor %}
 
-      {# JS-переключение блоков выбора режима закрытия #}
-      <script>
-      (function() {
-        document.querySelectorAll('form.close-inv-form').forEach(function(form) {
-          var radios = form.querySelectorAll('.close-mode-radio');
-          var blockExp = form.querySelector('.close-mode-expected');
-          var blockCust = form.querySelector('.close-mode-custom');
-          var inputProfit = form.querySelector('.close-actual-profit');
-          function update() {
-            var val = form.querySelector('.close-mode-radio:checked').value;
-            if (val === 'custom') {
-              if (blockExp) blockExp.style.display = 'none';
-              if (blockCust) blockCust.style.display = 'block';
-              if (inputProfit) { inputProfit.disabled = false; inputProfit.required = true; }
-            } else {
-              if (blockExp) blockExp.style.display = 'block';
-              if (blockCust) blockCust.style.display = 'none';
-              if (inputProfit) { inputProfit.disabled = true; inputProfit.required = false; }
-            }
-          }
-          radios.forEach(function(r) { r.addEventListener('change', update); });
-          update();
-        });
-      })();
-      </script>
+      {# CSS для карточек-радио в модалке закрытия #}
+      <style>
+        /* Диалог-обёртка — без overflow обрезок */
+        .close-inv-dialog { max-width: 560px; }
+        /* Form как modal-content — без backdrop-filter (не создаёт stacking context),
+           без padding (modal-header/body/footer сами задают padding),
+           видимая граница */
+        form.close-inv-form.modal-content {
+          background: #1a1f2e;
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 14px;
+          padding: 0;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        /* Карточки-радио */
+        .close-mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        @media (max-width: 480px) { .close-mode-cards { grid-template-columns: 1fr; } }
+        .close-mode-cards .close-mode-radio { position: absolute; left: -9999px; opacity: 0; }
+        .close-mode-card {
+          display: flex; align-items: center; gap: 12px;
+          padding: 12px 14px; border-radius: 12px;
+          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,255,255,0.08);
+          cursor: pointer; transition: all .15s ease;
+          position: relative; user-select: none;
+        }
+        .close-mode-card:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.18); }
+        .close-mode-card-icon {
+          width: 38px; height: 38px; border-radius: 10px;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 1rem; flex-shrink: 0;
+        }
+        .close-mode-card-text { flex: 1; min-width: 0; }
+        .close-mode-card-title { color: #fff; font-weight: 600; font-size: 0.92rem; line-height: 1.25; }
+        .close-mode-card-sub { color: #94a3b8; font-size: 0.74rem; margin-top: 3px; line-height: 1.3; }
+        .close-mode-card-tick { color: transparent; font-size: 1.05rem; transition: color .15s ease; }
+        .close-mode-radio:checked + .close-mode-card { border-color: #f59e0b; background: rgba(245,158,11,0.08); }
+        .close-mode-radio:checked + .close-mode-card .close-mode-card-tick { color: #f59e0b; }
+        .close-mode-radio:focus-visible + .close-mode-card { outline: 2px solid #f59e0b; outline-offset: 2px; }
+        .close-summary {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 12px 14px; border-radius: 10px;
+          background: rgba(16,185,129,0.08);
+          border: 1px solid rgba(16,185,129,0.25);
+          color: #cbd5e1; font-size: 0.9rem;
+        }
+      </style>
+
+      {# JS для модалки закрытия вынесён в static/js/script.js (CSP блокирует inline) #}
     </div>
     {% endif %}
   </div>

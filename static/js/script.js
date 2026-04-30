@@ -246,4 +246,33 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
     });
+
+    // ── Модалка закрытия инвестиции (admin_dashboard.html) ──
+    // Переносим модалки в конец body — иначе предок .glass-card с backdrop-filter
+    // становится containing-block для position:fixed и обрезает модалку.
+    document.querySelectorAll('.modal[id^="closeInvModal"]').forEach(function (m) {
+        if (m.parentElement !== document.body) document.body.appendChild(m);
+    });
+    // Переключение режима закрытия (По расчёту / Своя сумма)
+    document.querySelectorAll('form.close-inv-form').forEach(function (form) {
+        var radios = form.querySelectorAll('.close-mode-radio');
+        var blockExp = form.querySelector('.close-mode-expected');
+        var blockCust = form.querySelector('.close-mode-custom');
+        var inputProfit = form.querySelector('.close-actual-profit');
+        function update() {
+            var checked = form.querySelector('.close-mode-radio:checked');
+            var val = checked ? checked.value : 'expected';
+            if (val === 'custom') {
+                if (blockExp) blockExp.style.display = 'none';
+                if (blockCust) blockCust.style.display = 'block';
+                if (inputProfit) { inputProfit.disabled = false; inputProfit.required = true; }
+            } else {
+                if (blockExp) blockExp.style.display = 'block';
+                if (blockCust) blockCust.style.display = 'none';
+                if (inputProfit) { inputProfit.disabled = true; inputProfit.required = false; }
+            }
+        }
+        radios.forEach(function (r) { r.addEventListener('change', update); });
+        update();
+    });
 });
