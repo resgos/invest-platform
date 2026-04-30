@@ -206,8 +206,12 @@
                     <span style="color:#fff;font-weight:600">{{ "{:,.0f}".format(inv.amount).replace(",", " ") }} ₽</span>
                   </div>
                   <div class="d-flex justify-content-between mt-1" style="font-size:0.88rem">
-                    <span style="color:#94a3b8">Ожидаемая прибыль на сегодня</span>
+                    <span style="color:#94a3b8">Ожидаемая прибыль <small style="color:#64748b">за весь срок</small></span>
                     <span class="text-profit fw-semibold">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span>
+                  </div>
+                  <div class="d-flex justify-content-between mt-1" style="font-size:0.88rem">
+                    <span style="color:#94a3b8">Прошло дней с начала</span>
+                    <span style="color:#fff">{{ inv.days_passed }} дн.</span>
                   </div>
                 </div>
 
@@ -233,12 +237,15 @@
                   </label>
                 </div>
 
-                {# Блок "С ожидаемой" — авто-расчёт pro-rata, поле disabled #}
+                {# Блок "По расчёту" — pro-rata за прошедшие дни #}
                 <div class="close-mode-block close-mode-expected mt-3">
                   <div class="close-summary">
-                    <span>К выплате расчётно:</span>
-                    <span class="text-profit fw-semibold">+{{ "{:,.0f}".format(inv.expected_profit).replace(",", " ") }} ₽</span>
+                    <span>К выплате расчётно <small style="color:#64748b">(pro-rata за {{ inv.days_passed }} дн.)</small>:</span>
+                    <span class="text-profit fw-semibold">+{{ "{:,.0f}".format(inv.pro_rata_profit_today).replace(",", " ") }} ₽</span>
                   </div>
+                  {% if inv.actual_profit and inv.actual_profit > inv.pro_rata_profit_today %}
+                  <small class="text-muted-light d-block mt-2" style="font-size:0.78rem"><i class="fas fa-info-circle me-1"></i>Ранее уже выплачено больше ({{ "{:,.0f}".format(inv.actual_profit).replace(",", " ") }} ₽) — оставим эту сумму при закрытии.</small>
+                  {% endif %}
                 </div>
 
                 {# Блок "Кастомная сумма" — поле включается #}

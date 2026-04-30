@@ -1273,14 +1273,11 @@ def create_app():
                 return redirect(request.referrer or url_for('admin_dashboard'))
             actual_profit = safe_float(actual_profit_str)
         else:
-            # Расчёт pro-rata от даты начала инвестиции до сегодня
-            from datetime import date as _date
-            today_d = _date.today()
-            start_d = inv.deal.date_start or (inv.invested_at.date() if inv.invested_at else today_d)
-            days_passed = max((today_d - start_d).days, 1)
-            pct = inv.deal_profit_pct or inv.deal.expected_profit_pct or 0
-            calc_profit = round(inv.amount * (pct / 100) * (days_passed / 365), 2)
-            # Из calc_profit или уже выплаченной берём максимум — на случай если ранее выплатили больше
+            # Pro-rata за фактически прошедшие дни (от start до сегодня).
+            # Используем единую формулу с моделью (Investment.pro_rata_profit_today),
+            # чтобы UI и backend всегда показывали одно и то же число.
+            calc_profit = inv.pro_rata_profit_today
+            # Если ранее уже выплачивали больше pro-rata — оставляем большее
             actual_profit = max(calc_profit, inv.actual_profit or 0)
 
         if actual_profit < 0:

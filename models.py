@@ -306,6 +306,28 @@ class Investment(db.Model):
         """Expected profit minus actual profit received."""
         return max(self.expected_profit - self.actual_profit, 0)
 
+    @property
+    def days_passed(self):
+        """Сколько дней прошло с начала инвестиции до сегодня."""
+        if not self.date_start:
+            if self.invested_at:
+                return max((date.today() - self.invested_at.date()).days, 0)
+            return 0
+        return max((date.today() - self.date_start).days, 0)
+
+    @property
+    def pro_rata_profit_today(self):
+        """Прибыль pro-rata за фактически прошедшие дни (от start до сегодня).
+        Это сумма, которую начислит close_investment в режиме «По расчёту».
+        """
+        if not self.deal:
+            return 0
+        pct = self.deal.expected_profit_pct or 0
+        if pct == 0:
+            return 0
+        days = max(self.days_passed, 1)  # минимум 1 день, чтобы не было 0₽ при закрытии в день старта
+        return round(self.amount * (pct / 100) * (days / 365), 2)
+
 
 class Transaction(db.Model):
     __tablename__ = 'transactions'
