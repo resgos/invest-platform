@@ -9,35 +9,30 @@
   2. сделка ему разрешена к просмотру (Deal.user_can_see),
   3. сделка проходит его фильтры (BotFilter; нет фильтра = подходит всё).
 
-Персональные события по заявкам (подтверждена/отклонена/закрыта) сохраняются
-без фильтров — это события самого пользователя.
+Персональные события по заявкам (подтверждена/отклонена/закрыта/прибыль)
+сохраняются без фильтров — это события самого пользователя.
+
+Дедуп deal-событий: одна строка на (user, deal, event_type). Повторная эмиссия
+обновляет текст ещё не доставленных строк и реанимирует failed (например, после
+исправления опечатки в telegram_id); уже доставленные повторно не шлются.
 """
-import html
 import logging
+from datetime import date
 
 from sqlalchemy.exc import IntegrityError
 
 from models import db, User, BotFilter, BotNotification
-from telegram_notify import CATEGORY_LABELS, RISK_LABELS
+from telegram_notify import CATEGORY_LABELS, RISK_LABELS, fmt_money, esc
 
 logger = logging.getLogger(__name__)
 
-
-def _esc(s):
-    """HTML-экранирование для parse_mode=HTML — название сделки с «<» или «&»
-    иначе роняет sendMessage (400 Bad Request)."""
-    return html.escape(str(s or ''), quote=False)
-
 # Типы событий
 EVENT_DEAL_PUBLISHED = 'deal_published'
-EVENT_DEAL_STARTING = 'deal_starting'
+EVENT_DEAL_STARTING = 'deal_starting'   # + суффикс горизонта: deal_starting_3
 EVENT_INV_CONFIRMED = 'investment_confirmed'
 EVENT_INV_REJECTED = 'investment_rejected'
 EVENT_INV_CLOSED = 'investment_closed'
-
-
-def _fmt_money(x):
-    return f'{(x or 0):,.0f}'.replace(',', ' ')
+EVENT_PROFIT_PAID = 'profit_paid'
 
 
 # ──────────────────── Матчинг фильтров ────────────────────
@@ -55,22 +50,13 @@ def deal_matches_filter(deal, bot_filter):
     if risks and deal.risk_level not in risks:
         return False
     if bot_filter.min_profit_pct is not None and bot_filter.min_profit_pct > 0:
-        if (deal.expected_profit_pct or 0) < bot_filter.min_profit_pct:
+        # Срочные продажи не имеют доходности по определению (profit принудительно 0)
+        # — порог доходности к ним не применяется, иначе они не доходили бы никому
+        if not deal.is_urgent_sale and (deal.expected_profit_pct or 0) < bot_filter.min_profit_pct:
             return False
     if bot_filter.max_entry is not None and bot_filter.max_entry > 0:
         if (deal.min_investment or 0) > bot_filter.max_entry:
             return False
-    return True
-
-
-def deal_accepts_investors(deal, today):
-    """Принимает ли сделка новых инвесторов (та же логика, что в роуте invest)."""
-    if deal.status != 'active':
-        return False
-    if deal.date_end and deal.date_end < today:
-        return False
-    if deal.date_start and deal.date_start <= today:
-        return False
     return True
 
 
@@ -82,12 +68,23 @@ def eligible_users_for_deal(deal):
         User.is_active.is_(True),
         User.telegram_id.isnot(None),
     ).all()
+    if not users:
+        return []
+    # Один запрос фильтров на всех вместо N+1
+    filters_by_user = {
+        bf.user_id: bf
+        for bf in BotFilter.query.filter(
+            BotFilter.user_id.in_([u.id for u in users])).all()
+    }
+    # Для адресной видимости — один запрос списка допущенных вместо N точечных
+    allowed_ids = None
+    if deal.visibility != 'all':
+        allowed_ids = {u.id for u in deal.visible_to.all()}
     result = []
     for u in users:
-        if not deal.user_can_see(u):
+        if allowed_ids is not None and u.id not in allowed_ids:
             continue
-        bf = BotFilter.query.filter_by(user_id=u.id).first()
-        if not deal_matches_filter(deal, bf):
+        if not deal_matches_filter(deal, filters_by_user.get(u.id)):
             continue
         result.append(u)
     return result
@@ -108,7 +105,7 @@ def format_deal_published(app, deal):
     lines = [
         '🆕 <b>Новая сделка для вас</b>',
         '━━━━━━━━━━━━━━━━━━━━━',
-        f'📋 <b>{_esc(deal.title)}</b>',
+        f'📋 <b>{esc(deal.title)}</b>',
         f'📁 {cat}',
     ]
     if not deal.is_urgent_sale and (deal.expected_profit_pct or 0) > 0:
@@ -116,9 +113,9 @@ def format_deal_published(app, deal):
     lines.append(f'⏱ Срок: {deal.term_display}')
     lines.append(f'⚠️ Риск: {risk}')
     if deal.min_investment:
-        lines.append(f'💵 Мин. вход: <b>{_fmt_money(deal.min_investment)} ₽</b>')
+        lines.append(f'💵 Мин. вход: <b>{fmt_money(deal.min_investment)} ₽</b>')
     if deal.total_pool:
-        lines.append(f'🎯 Пул: <b>{_fmt_money(deal.total_pool)} ₽</b>')
+        lines.append(f'🎯 Пул: <b>{fmt_money(deal.total_pool)} ₽</b>')
     return '\n'.join(lines) + _deal_link(app, deal)
 
 
@@ -133,34 +130,37 @@ def format_deal_starting(app, deal, days_until):
     lines = [
         '🔥 <b>Сделка скоро стартует</b>',
         '━━━━━━━━━━━━━━━━━━━━━',
-        f'📋 <b>{_esc(deal.title)}</b>',
+        f'📋 <b>{esc(deal.title)}</b>',
         f'📁 {cat}',
         f'📅 Старт: <b>{deal.date_start.strftime("%d.%m.%Y")}</b> ({when})',
     ]
     if (deal.expected_profit_pct or 0) > 0:
         lines.append(f'📈 Доходность: <b>+{deal.expected_profit_pct}% годовых</b>')
     if deal.min_investment:
-        lines.append(f'💵 Мин. вход: <b>{_fmt_money(deal.min_investment)} ₽</b>')
+        lines.append(f'💵 Мин. вход: <b>{fmt_money(deal.min_investment)} ₽</b>')
     lines.append('⏳ Успейте подать заявку до старта')
     return '\n'.join(lines) + _deal_link(app, deal)
 
 
-def format_investment_event(app, inv, event_type):
+def format_investment_event(app, inv, event_type, amount_paid=None):
     deal = inv.deal
-    amount = _fmt_money(inv.amount)
+    amount = fmt_money(inv.amount)
     if event_type == EVENT_INV_CONFIRMED:
         head = '✅ <b>Ваша заявка подтверждена</b>'
         tail = f'⏱ Срок: {inv.term_display}'
     elif event_type == EVENT_INV_REJECTED:
         head = '❌ <b>Ваша заявка отклонена</b>'
-        tail = _esc((inv.notes or '').strip())
+        tail = esc((inv.notes or '').strip())
+    elif event_type == EVENT_PROFIT_PAID:
+        head = '💰 <b>Начислена прибыль</b>'
+        tail = f'➕ Сумма начисления: <b>{fmt_money(amount_paid)} ₽</b>'
     else:  # EVENT_INV_CLOSED
         head = '🏁 <b>Ваша инвестиция закрыта</b>'
-        tail = f'💰 Прибыль: <b>{_fmt_money(inv.actual_profit)} ₽</b>'
+        tail = f'💰 Прибыль: <b>{fmt_money(inv.actual_profit)} ₽</b>'
     lines = [
         head,
         '━━━━━━━━━━━━━━━━━━━━━',
-        f'📋 Сделка: <b>{_esc(deal.title)}</b>',
+        f'📋 Сделка: <b>{esc(deal.title)}</b>',
         f'💵 Сумма: <b>{amount} ₽</b>',
     ]
     if tail:
@@ -170,68 +170,95 @@ def format_investment_event(app, inv, event_type):
 
 # ──────────────────── Сохранение (outbox) ────────────────────
 
-def _save_notification(user_id, event_type, message, deal_id=None, investment_id=None):
-    """Сохраняет уведомление; дубль deal-события молча пропускается
-    (partial-unique индекс uq_bot_notif_user_deal_event)."""
-    if investment_id is None and deal_id is not None:
-        exists = BotNotification.query.filter_by(
-            user_id=user_id, deal_id=deal_id, event_type=event_type,
-            investment_id=None,
-        ).first()
-        if exists:
-            return False
-    notif = BotNotification(
-        user_id=user_id, deal_id=deal_id, investment_id=investment_id,
-        event_type=event_type, message=message, status='pending',
-    )
-    db.session.add(notif)
-    try:
-        db.session.commit()
-        return True
-    except IntegrityError:
-        # Гонка параллельных воркеров — дубль уже сохранён
-        db.session.rollback()
+def _upsert_deal_notification(user_id, event_type, message, deal_id):
+    """Deal-событие с дедупом. Возвращает True, если добавлена НОВАЯ строка.
+
+    Существующая строка: sent → не трогаем (не спамим повторно);
+    pending → обновляем текст (правки сделки доезжают до недоставленных);
+    failed → реанимируем в pending (например, админ исправил telegram_id).
+    """
+    existing = BotNotification.query.filter_by(
+        user_id=user_id, deal_id=deal_id, event_type=event_type,
+        investment_id=None,
+    ).first()
+    if existing:
+        if existing.status == 'pending':
+            existing.message = message
+        elif existing.status == 'failed':
+            existing.status = 'pending'
+            existing.attempts = 0
+            existing.message = message
         return False
+    db.session.add(BotNotification(
+        user_id=user_id, deal_id=deal_id, investment_id=None,
+        event_type=event_type, message=message, status='pending',
+    ))
+    return True
+
+
+def _emit_deal_event(app, deal, event_type, message):
+    """Общий фан-аут deal-события: один текст, батч-выборка получателей,
+    один commit; гонка уникального индекса — rollback и точечный повтор."""
+    users = eligible_users_for_deal(deal)
+    saved = 0
+    try:
+        for u in users:
+            if _upsert_deal_notification(u.id, event_type, message, deal.id):
+                saved += 1
+        db.session.commit()
+    except IntegrityError:
+        # Параллельный воркер вставил дубль — откатываемся и повторяем по одному
+        db.session.rollback()
+        saved = 0
+        for u in users:
+            try:
+                if _upsert_deal_notification(u.id, event_type, message, deal.id):
+                    saved += 1
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+    if saved:
+        logger.info(f'bot_events: {event_type} #{deal.id} — сохранено {saved} уведомлений')
+    return saved
 
 
 def emit_deal_published(app, deal):
     """Событие «опубликована сделка» всем подходящим пользователям.
 
     Вызывается при создании сделки И при расширении видимости (edit_deal /
-    edit_visibility) — дедуп гарантирует, что каждый пользователь получит
-    событие по сделке один раз.
+    edit_visibility / реактивация) — дедуп гарантирует, что каждый пользователь
+    получит событие по сделке один раз; недоставленным текст обновляется.
     """
-    from datetime import date as _date
-    if not deal_accepts_investors(deal, _date.today()):
+    if not deal.accepts_investors(date.today()):
         return 0
-    saved = 0
-    for u in eligible_users_for_deal(deal):
-        msg = format_deal_published(app, deal)
-        if _save_notification(u.id, EVENT_DEAL_PUBLISHED, msg, deal_id=deal.id):
-            saved += 1
-    if saved:
-        logger.info(f'bot_events: deal_published #{deal.id} — сохранено {saved} уведомлений')
-    return saved
+    return _emit_deal_event(app, deal, EVENT_DEAL_PUBLISHED,
+                            format_deal_published(app, deal))
 
 
 def emit_deal_starting(app, deal, days_until):
-    """Событие «сделка скоро стартует» (из notify_upcoming.py, per-user)."""
-    saved = 0
-    for u in eligible_users_for_deal(deal):
-        msg = format_deal_starting(app, deal, days_until)
-        if _save_notification(u.id, EVENT_DEAL_STARTING, msg, deal_id=deal.id):
-            saved += 1
-    if saved:
-        logger.info(f'bot_events: deal_starting #{deal.id} — сохранено {saved} уведомлений')
-    return saved
+    """Событие «сделка скоро стартует» (из notify_upcoming.py, per-user).
+
+    Горизонт входит в event_type (deal_starting_3, deal_starting_1, ...) —
+    напоминания за 3 дня и накануне НЕ схлопываются дедупом."""
+    event_type = f'{EVENT_DEAL_STARTING}_{days_until}'
+    return _emit_deal_event(app, deal, event_type,
+                            format_deal_starting(app, deal, days_until))
 
 
-def emit_investment_event(app, inv, event_type):
+def emit_investment_event(app, inv, event_type, amount_paid=None):
     """Персональное событие по заявке/инвестиции — фильтры не применяются,
     нужен только прописанный telegram_id."""
     user = db.session.get(User, inv.user_id)
     if not user or not user.telegram_id or not user.is_active:
         return False
-    msg = format_investment_event(app, inv, event_type)
-    return _save_notification(user.id, event_type, msg,
-                              deal_id=inv.deal_id, investment_id=inv.id)
+    msg = format_investment_event(app, inv, event_type, amount_paid=amount_paid)
+    db.session.add(BotNotification(
+        user_id=user.id, deal_id=inv.deal_id, investment_id=inv.id,
+        event_type=event_type, message=msg, status='pending',
+    ))
+    try:
+        db.session.commit()
+        return True
+    except IntegrityError:
+        db.session.rollback()
+        return False

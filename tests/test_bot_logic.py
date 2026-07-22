@@ -17,10 +17,11 @@ from flask import Flask
 from models import db, User, Deal, Investment, BotFilter, BotNotification
 import bot_events
 from bot_events import (deal_matches_filter, emit_deal_published,
-                        emit_investment_event, EVENT_DEAL_PUBLISHED,
-                        EVENT_INV_CONFIRMED)
+                        emit_deal_starting, emit_investment_event,
+                        EVENT_DEAL_PUBLISHED, EVENT_INV_CONFIRMED)
 import tg_bot
-from tg_bot import resolve_user, apply_filter_callback, visible_active_deals
+from tg_bot import (resolve_user, apply_filter_callback,
+                    visible_active_deals_query, _deal_event_still_relevant)
 
 
 def make_app():
@@ -68,44 +69,48 @@ class BotTestCase(unittest.TestCase):
 
 
 class FilterMatchTests(BotTestCase):
+    # deal_matches_filter — чистая функция: BotFilter не персистится,
+    # пользователь для матчинга не нужен
+
     def test_no_filter_matches_everything(self):
         d = mk_deal()
         self.assertTrue(deal_matches_filter(d, None))
 
     def test_disabled_filter_rejects(self):
-        u = mk_user('u1', tg=101)
-        bf = BotFilter(user_id=u.id, enabled=False)
+        bf = BotFilter(enabled=False)
         d = mk_deal()
         self.assertFalse(deal_matches_filter(d, bf))
 
     def test_category_filter(self):
-        u = mk_user('u1', tg=101)
-        bf = BotFilter(user_id=u.id, enabled=True, categories='auto,business')
+        bf = BotFilter(enabled=True, categories='auto,business')
         self.assertFalse(deal_matches_filter(mk_deal(category='realestate'), bf))
         self.assertTrue(deal_matches_filter(mk_deal(category='auto'), bf))
 
     def test_risk_filter(self):
-        u = mk_user('u1', tg=101)
-        bf = BotFilter(user_id=u.id, enabled=True, risk_levels='low')
+        bf = BotFilter(enabled=True, risk_levels='low')
         self.assertFalse(deal_matches_filter(mk_deal(risk='high'), bf))
         self.assertTrue(deal_matches_filter(mk_deal(risk='low'), bf))
 
     def test_min_profit_filter(self):
-        u = mk_user('u1', tg=101)
-        bf = BotFilter(user_id=u.id, enabled=True, min_profit_pct=15)
+        bf = BotFilter(enabled=True, min_profit_pct=15)
         self.assertFalse(deal_matches_filter(mk_deal(profit=10), bf))
         self.assertTrue(deal_matches_filter(mk_deal(profit=20), bf))
         self.assertTrue(deal_matches_filter(mk_deal(profit=15), bf))
 
+    def test_urgent_sale_bypasses_min_profit(self):
+        # У срочных продаж доходность принудительно 0 — порог доходности
+        # не должен их резать (иначе они не доходили бы никому с пресетом)
+        bf = BotFilter(enabled=True, min_profit_pct=15)
+        urgent = mk_deal(profit=0, deal_type='urgent_sale')
+        self.assertTrue(deal_matches_filter(urgent, bf))
+
     def test_max_entry_filter(self):
-        u = mk_user('u1', tg=101)
-        bf = BotFilter(user_id=u.id, enabled=True, max_entry=500_000)
+        bf = BotFilter(enabled=True, max_entry=500_000)
         self.assertFalse(deal_matches_filter(mk_deal(min_inv=700_000), bf))
         self.assertTrue(deal_matches_filter(mk_deal(min_inv=300_000), bf))
 
     def test_empty_csv_means_all(self):
-        u = mk_user('u1', tg=101)
-        bf = BotFilter(user_id=u.id, enabled=True, categories='', risk_levels='')
+        bf = BotFilter(enabled=True, categories='', risk_levels='')
         self.assertTrue(deal_matches_filter(mk_deal(category='other', risk='high'), bf))
 
 
@@ -181,6 +186,46 @@ class EmitDealPublishedTests(BotTestCase):
         self.assertEqual(emit_deal_published(self.app, paused), 0)
         started = mk_deal(date_start=date.today() - timedelta(days=1))
         self.assertEqual(emit_deal_published(self.app, started), 0)
+
+    def test_failed_notification_requeued_on_reemit(self):
+        # Опечатка в telegram_id → доставка failed → админ исправил → повторная
+        # эмиссия обязана реанимировать строку, а не молча дедупнуть
+        mk_user('u1', tg=111)
+        d = mk_deal(visibility='all')
+        emit_deal_published(self.app, d)
+        row = BotNotification.query.first()
+        row.status = 'failed'
+        row.attempts = 5
+        db.session.commit()
+
+        self.assertEqual(emit_deal_published(self.app, d), 0)  # новых строк нет
+        row = BotNotification.query.first()
+        self.assertEqual(row.status, 'pending')
+        self.assertEqual(row.attempts, 0)
+
+    def test_pending_message_refreshed_on_deal_edit(self):
+        # Правка сделки до доставки — недоставленная строка получает свежий текст
+        mk_user('u1', tg=111)
+        d = mk_deal(title='Старое название', visibility='all')
+        emit_deal_published(self.app, d)
+        d.title = 'Новое название'
+        db.session.commit()
+        emit_deal_published(self.app, d)
+
+        rows = BotNotification.query.all()
+        self.assertEqual(len(rows), 1)
+        self.assertIn('Новое название', rows[0].message)
+
+    def test_deal_starting_horizons_not_collapsed(self):
+        # Напоминания «за 3 дня» и «завтра» — разные события, дедуп не схлопывает
+        mk_user('u1', tg=111)
+        d = mk_deal(visibility='all', date_start=date.today() + timedelta(days=3))
+        self.assertEqual(emit_deal_starting(self.app, d, 3), 1)
+        self.assertEqual(emit_deal_starting(self.app, d, 1), 1)
+        # повтор того же горизонта — дубль не создаётся
+        self.assertEqual(emit_deal_starting(self.app, d, 3), 0)
+        types = sorted(n.event_type for n in BotNotification.query.all())
+        self.assertEqual(types, ['deal_starting_1', 'deal_starting_3'])
 
 
 class EmitInvestmentEventTests(BotTestCase):
@@ -277,6 +322,22 @@ class FilterCallbackTests(BotTestCase):
         apply_filter_callback(bf, 'entry', '500000')
         self.assertEqual(bf.max_entry, 500_000)
 
+    def test_forged_callback_values_ignored(self):
+        # callback_data подделываем как клиент: inf/nan/мусор не должны
+        # ни падать, ни персиститься в фильтры
+        bf = self._bf()
+        for action, value in [('profit', 'inf'), ('profit', 'nan'),
+                              ('profit', 'abc'), ('profit', '99'),
+                              ('entry', '1e400'), ('entry', 'garbage'),
+                              ('cat', 'FORGED'), ('risk', 'FORGED'),
+                              ('unknown', 'x')]:
+            changed, alert = apply_filter_callback(bf, action, value)
+            self.assertFalse(changed, f'{action}|{value} не должен применяться')
+        self.assertIsNone(bf.min_profit_pct)
+        self.assertIsNone(bf.max_entry)
+        self.assertIsNone(bf.categories)
+        self.assertIsNone(bf.risk_levels)
+
     def test_reset(self):
         bf = self._bf()
         apply_filter_callback(bf, 'cat', 'auto')
@@ -292,20 +353,61 @@ class FilterCallbackTests(BotTestCase):
 class VisibleDealsTests(BotTestCase):
     def test_visible_deals_for_bot(self):
         u = mk_user('u1', tg=111)
-        visible = mk_deal(title='Открытая', visibility='all')
-        hidden = mk_deal(title='Чужая', visibility='selected')
-        expired = mk_deal(title='Истёкшая', visibility='all',
-                          date_end=date.today() - timedelta(days=1))
-        started = mk_deal(title='Ушедшая', visibility='all',
-                          date_start=date.today())
-        deals = visible_active_deals(u)
+        mk_deal(title='Открытая', visibility='all')
+        mk_deal(title='Чужая', visibility='selected')
+        mk_deal(title='Истёкшая', visibility='all',
+                date_end=date.today() - timedelta(days=1))
+        mk_deal(title='Ушедшая', visibility='all', date_start=date.today())
+        deals = visible_active_deals_query(u).all()
         self.assertEqual([d.title for d in deals], ['Открытая'])
 
     def test_admin_sees_all(self):
         admin = mk_user('boss', tg=999, role='admin')
         mk_deal(title='Открытая', visibility='all')
         mk_deal(title='Адресная', visibility='selected')
-        self.assertEqual(len(visible_active_deals(admin)), 2)
+        self.assertEqual(visible_active_deals_query(admin).count(), 2)
+
+
+class DeliveryRecheckTests(BotTestCase):
+    """Перепроверка deal-события на момент доставки (защита от утечки)."""
+
+    def _notif(self, user, deal):
+        emit_deal_published(self.app, deal)
+        return BotNotification.query.filter_by(user_id=user.id, deal_id=deal.id).first()
+
+    def test_paused_deal_event_not_relevant(self):
+        u = mk_user('u1', tg=111)
+        d = mk_deal(visibility='all')
+        n = self._notif(u, d)
+        self.assertTrue(_deal_event_still_relevant(n, u))
+        d.status = 'paused'
+        db.session.commit()
+        self.assertFalse(_deal_event_still_relevant(n, u))
+
+    def test_visibility_narrowed_event_not_relevant(self):
+        u = mk_user('u1', tg=111)
+        d = mk_deal(visibility='all')
+        n = self._notif(u, d)
+        # Админ сужает видимость до «выбранным», пользователь в список не входит
+        d.visibility = 'selected'
+        db.session.commit()
+        self.assertFalse(_deal_event_still_relevant(n, u))
+        # А включённый в список — по-прежнему получает
+        d.visible_to.append(u)
+        db.session.commit()
+        self.assertTrue(_deal_event_still_relevant(n, u))
+
+    def test_personal_events_always_relevant(self):
+        u = mk_user('u1', tg=111)
+        d = mk_deal(visibility='all')
+        inv = Investment(user_id=u.id, deal_id=d.id, amount=100, status='active')
+        db.session.add(inv)
+        db.session.commit()
+        emit_investment_event(self.app, inv, EVENT_INV_CONFIRMED)
+        n = BotNotification.query.filter_by(investment_id=inv.id).first()
+        d.status = 'paused'
+        db.session.commit()
+        self.assertTrue(_deal_event_still_relevant(n, u))
 
 
 if __name__ == '__main__':

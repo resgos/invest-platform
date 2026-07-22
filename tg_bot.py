@@ -7,6 +7,8 @@
 
   1. Доставляет сохранённые события из outbox (bot_notifications) в личку —
      новые сделки по фильтрам пользователя, скорый старт, статусы заявок.
+     Перед отправкой deal-события видимость перепроверяется: если админ успел
+     сузить доступ или поставить сделку на паузу, строка отменяется.
   2. Отвечает на команды: /deals /feed /filters /myid /help.
 
 Транспорт — чистый urllib с той же прокси-логикой, что и telegram_notify
@@ -16,16 +18,18 @@
     python tg_bot.py            # рабочий режим (long polling)
     python tg_bot.py --once     # один проход outbox + один getUpdates (smoke)
 
+ВАЖНО: getUpdates должен звать только один процесс. Не запускайте --once,
+пока работает systemd-сервис — оба процесса прочитают одни pending-строки
+и пользователи получат дубли.
+
 Токен: TELEGRAM_USER_BOT_TOKEN (по умолчанию = TELEGRAM_BOT_TOKEN).
-ВАЖНО: getUpdates должен звать только этот процесс — не запускайте два бота
-с одним токеном.
 """
 from __future__ import annotations
 
 import argparse
-import html
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -34,7 +38,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from models import db, User, Deal, BotFilter, BotNotification
-from telegram_notify import _get_proxy_opener, CATEGORY_LABELS, RISK_LABELS
+from telegram_notify import _get_proxy_opener, CATEGORY_LABELS, RISK_LABELS, fmt_money, esc
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +47,9 @@ logging.basicConfig(
 logger = logging.getLogger('tg_bot')
 
 MSK = timezone(timedelta(hours=3))  # Europe/Moscow (без DST)
+
+INSTANCE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance')
+OFFSET_FILE = os.path.join(INSTANCE_DIR, 'bot_offset')
 
 ALL_CATEGORIES = ['realestate', 'auto', 'business', 'equipment', 'other']
 ALL_RISKS = ['low', 'medium', 'high']
@@ -56,21 +63,23 @@ CAT_SHORT = {
     'equipment': '⚙️ Оборуд.',
     'other': '📦 Другое',
 }
-RISK_SHORT = {'low': '🟢 Низкий', 'medium': '🟡 Средний', 'high': '🔴 Высокий'}
 
-MAX_ATTEMPTS = 5      # попыток доставки уведомления до статуса failed
-OUTBOX_BATCH = 50     # уведомлений за один проход диспетчера
-
-
-def esc(s) -> str:
-    return html.escape(str(s or ''), quote=False)
-
-
-def fmt_money(x) -> str:
-    return f'{(x or 0):,.0f}'.replace(',', ' ')
+TRANSIENT_MAX_ATTEMPTS = 100  # сетевые сбои ретраятся долго; permanent — сразу failed
+OUTBOX_BATCH = 50             # уведомлений за один проход диспетчера
+SEND_PACING_SEC = 0.05        # пауза между sendMessage (лимит Telegram ~30 msg/s)
 
 
 # ──────────────────── Telegram API (urllib + прокси) ────────────────────
+
+class TelegramApiError(RuntimeError):
+    """Ошибка Bot API с кодом, description из тела ответа и retry_after."""
+
+    def __init__(self, status, description, retry_after=None):
+        super().__init__(f'HTTP {status}: {description}')
+        self.status = status
+        self.description = description or ''
+        self.retry_after = retry_after
+
 
 class TelegramAPI:
     def __init__(self, token: str, proxy_url: str = ''):
@@ -82,20 +91,32 @@ class TelegramAPI:
         self.opener = _get_proxy_opener(proxy_url)
 
     def call(self, method: str, payload: dict | None = None, timeout: int = 20):
-        """Возвращает result из ответа API или бросает исключение."""
+        """Возвращает result; ошибки API поднимает как TelegramApiError
+        с описанием из ТЕЛА ответа (urllib кидает HTTPError на 4xx/5xx до
+        разбора JSON — без чтения тела все описания терялись бы)."""
         url = f'{self.base}/{method}'
         data = json.dumps(payload or {}).encode('utf-8')
         req = Request(url, data=data, headers={'Content-Type': 'application/json'})
-        if self.opener:
-            resp = self.opener.open(req, timeout=timeout)
-        else:
-            resp = urlopen(req, timeout=timeout)
+        try:
+            if self.opener:
+                resp = self.opener.open(req, timeout=timeout)
+            else:
+                resp = urlopen(req, timeout=timeout)
+        except HTTPError as e:
+            raw = e.read().decode('utf-8', errors='replace')
+            try:
+                body = json.loads(raw)
+                desc = body.get('description', '')
+                retry_after = (body.get('parameters') or {}).get('retry_after')
+            except ValueError:
+                desc, retry_after = raw[:200], None
+            raise TelegramApiError(e.code, desc, retry_after) from e
         try:
             body = json.loads(resp.read())
         finally:
             resp.close()
         if not body.get('ok'):
-            raise RuntimeError(f'Telegram API {method}: {body}')
+            raise TelegramApiError(200, body.get('description', str(body)))
         return body.get('result')
 
     def get_updates(self, offset: int, poll_timeout: int):
@@ -105,7 +126,8 @@ class TelegramAPI:
             'allowed_updates': ['message', 'callback_query'],
         }, timeout=poll_timeout + 15)
 
-    def send_message(self, chat_id, text, reply_markup=None) -> bool:
+    def send_message(self, chat_id, text, reply_markup=None):
+        """Возвращает (status, retry_after): 'ok' | 'flood' | 'permanent' | 'transient'."""
         payload = {
             'chat_id': chat_id,
             'text': text,
@@ -116,10 +138,20 @@ class TelegramAPI:
             payload['reply_markup'] = reply_markup
         try:
             self.call('sendMessage', payload)
-            return True
-        except (HTTPError, URLError, RuntimeError, OSError) as e:
+            return 'ok', None
+        except TelegramApiError as e:
+            if e.status == 429:
+                logger.warning(f'sendMessage → {chat_id}: flood limit, retry_after={e.retry_after}')
+                return 'flood', e.retry_after
+            if e.status in (400, 403, 404):
+                # blocked by user / chat not found / can't parse entities — ретрай бессмыслен
+                logger.error(f'sendMessage → {chat_id}: перманентная ошибка {e}')
+                return 'permanent', None
             logger.error(f'sendMessage → {chat_id}: {e}')
-            return False
+            return 'transient', None
+        except (URLError, OSError, ValueError) as e:
+            logger.error(f'sendMessage → {chat_id}: сеть — {e}')
+            return 'transient', None
 
     def edit_message(self, chat_id, message_id, text, reply_markup=None):
         payload = {
@@ -133,10 +165,12 @@ class TelegramAPI:
             payload['reply_markup'] = reply_markup
         try:
             self.call('editMessageText', payload)
-        except (HTTPError, URLError, RuntimeError, OSError) as e:
-            # «message is not modified» — штатно при повторном клике
-            if 'not modified' not in str(e):
+        except TelegramApiError as e:
+            # «message is not modified» — штатно при повторном клике по той же кнопке
+            if 'not modified' not in e.description:
                 logger.warning(f'editMessageText: {e}')
+        except (URLError, OSError, ValueError) as e:
+            logger.warning(f'editMessageText: {e}')
 
     def answer_callback(self, callback_id, text=None, show_alert=False):
         payload = {'callback_query_id': callback_id}
@@ -162,6 +196,27 @@ class TelegramAPI:
             logger.warning(f'setMyCommands: {e}')
 
 
+# ──────────────────── Персистентный offset getUpdates ────────────────────
+# Telegram подтверждает апдейты только следующим getUpdates с бОльшим offset.
+# Держим offset в файле: после краша/рестарта не переобрабатываем старые
+# команды (toggle-кнопки неидемпотентны — повторный клик перевернул бы фильтр).
+
+def load_offset() -> int:
+    try:
+        with open(OFFSET_FILE, 'r', encoding='utf-8') as f:
+            return int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def save_offset(offset: int) -> None:
+    try:
+        with open(OFFSET_FILE, 'w', encoding='utf-8') as f:
+            f.write(str(offset))
+    except OSError as e:
+        logger.warning(f'offset не сохранён: {e}')
+
+
 # ──────────────────── Доступ ────────────────────
 
 def resolve_user(telegram_id) -> User | None:
@@ -184,18 +239,13 @@ def access_denied_text(telegram_id) -> str:
 
 # ──────────────────── Данные ────────────────────
 
-def visible_active_deals(user: User):
-    """Активные сделки, принимающие заявки и видимые пользователю."""
-    today = date.today()
-    q = Deal.query.filter(
-        Deal.status == 'active',
-        db.or_(Deal.date_end.is_(None), Deal.date_end >= today),
-        db.or_(Deal.date_start.is_(None), Deal.date_start > today),
-    )
+def visible_active_deals_query(user: User):
+    """Активные сделки, принимающие заявки и видимые пользователю.
+    Бизнес-правила — методы Deal (единый источник с веб-роутами)."""
+    q = Deal.query.filter(*Deal.accepting_criteria(date.today()))
     if not user.is_admin:
-        q = q.filter(db.or_(Deal.visibility == 'all',
-                            Deal.visible_to.any(id=user.id)))
-    return q.order_by(Deal.created_at.desc()).all()
+        q = q.filter(Deal.visible_to_user_criteria(user))
+    return q.order_by(Deal.created_at.desc())
 
 
 def get_or_create_filter(user: User) -> BotFilter:
@@ -255,16 +305,17 @@ def _deal_line(deal: Deal) -> str:
 
 
 def cmd_deals(app, user: User) -> str:
-    deals = visible_active_deals(user)
-    if not deals:
+    q = visible_active_deals_query(user)
+    total = q.count()
+    if not total:
         return ('💼 Сейчас нет доступных вам сделок, принимающих заявки.\n'
                 'Как только появится подходящая — пришлём уведомление.')
-    shown = deals[:10]
-    lines = [f'💼 <b>Доступные сделки ({len(deals)})</b>',
+    shown = q.limit(10).all()
+    lines = [f'💼 <b>Доступные сделки ({total})</b>',
              '━━━━━━━━━━━━━━━━━━━━━']
     lines += [_deal_line(d) for d in shown]
-    if len(deals) > len(shown):
-        lines.append(f'… и ещё {len(deals) - len(shown)} в каталоге платформы')
+    if total > len(shown):
+        lines.append(f'… и ещё {total - len(shown)} в каталоге платформы')
     site = (app.config.get('SITE_URL') or '').rstrip('/')
     if site:
         lines.append(f'\n🔗 Каталог: {site}/catalog')
@@ -273,31 +324,43 @@ def cmd_deals(app, user: User) -> str:
 
 def cmd_feed(app, user: User) -> str:
     notifs = (BotNotification.query.filter_by(user_id=user.id)
+              .filter(BotNotification.status != 'cancelled')
               .order_by(BotNotification.created_at.desc())
               .limit(10).all())
     if not notifs:
         return ('📭 Лента пуста — пока не было событий по вашим фильтрам.\n'
                 'Настроить фильтры: /filters')
-    blocks = [f'🗂 <b>Последние события ({len(notifs)})</b>']
+    header = f'🗂 <b>Последние события ({len(notifs)})</b>'
+    blocks = []
     for n in notifs:
         when = ''
         if n.created_at:
             when = n.created_at.replace(tzinfo=timezone.utc).astimezone(MSK).strftime('%d.%m %H:%M')
         blocks.append(f'━━ {when} ━━\n{n.message}')
-    text = '\n\n'.join(blocks)
-    # Telegram лимит 4096 — обрезаем по границе блока
-    if len(text) > 3900:
-        cut = text[:3900]
-        text = cut[:cut.rfind('━━')] + '\n…(показаны не все события)'
+    # Лимит Telegram 4096: набираем ЦЕЛЫЕ блоки, пока влезает
+    parts = [header]
+    size = len(header)
+    truncated = False
+    for b in blocks:
+        if size + len(b) + 2 > 3900:
+            truncated = True
+            break
+        parts.append(b)
+        size += len(b) + 2
+    text = '\n\n'.join(parts)
+    if truncated:
+        text += '\n\n…(показаны не все события)'
     return text
 
 
-def cmd_myid(app, user_or_id) -> str:
-    tid = user_or_id.telegram_id if isinstance(user_or_id, User) else user_or_id
-    return f'🆔 Ваш Telegram ID: <code>{tid}</code>'
+def cmd_myid(app, user: User) -> str:
+    return f'🆔 Ваш Telegram ID: <code>{user.telegram_id}</code>'
 
 
 # ──────────────────── /filters: текст + клавиатура ────────────────────
+
+RISK_SHORT = RISK_LABELS  # один источник подписей рисков с остальными сообщениями
+
 
 def filters_text(bf: BotFilter) -> str:
     cats = bf.categories_list()
@@ -354,7 +417,7 @@ def filters_keyboard(bf: BotFilter) -> dict:
         [cat_btn('realestate'), cat_btn('auto'), cat_btn('business')],
         [cat_btn('equipment'), cat_btn('other')],
         [risk_btn('low'), risk_btn('medium'), risk_btn('high')],
-        [{'text': '📈 Доходность:', 'callback_data': 'f|noop|0'}] ,
+        [{'text': '📈 Доходность:', 'callback_data': 'f|noop|0'}],
         [profit_btn(p) for p in PROFIT_PRESETS],
         [{'text': '💵 Порог входа:', 'callback_data': 'f|noop|0'}],
         [entry_btn(e) for e in ENTRY_PRESETS],
@@ -363,8 +426,19 @@ def filters_keyboard(bf: BotFilter) -> dict:
     ]}
 
 
+def _preset_value(value: str, presets: list) -> float | None:
+    """callback_data приходит от клиента и может быть подделана — принимаем
+    ТОЛЬКО значения из пресетов (никаких float('inf')/'nan'/мусора в БД)."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if v in presets else None
+
+
 def apply_filter_callback(bf: BotFilter, action: str, value: str) -> tuple[bool, str | None]:
-    """Применяет клик по кнопке фильтров. Возвращает (изменилось, alert-текст)."""
+    """Применяет клик по кнопке фильтров. Возвращает (изменилось, alert-текст).
+    Все значения валидируются по whitelist — мусор молча игнорируется."""
     if action == 'noop':
         return False, None
     if action == 'toggle':
@@ -376,6 +450,8 @@ def apply_filter_callback(bf: BotFilter, action: str, value: str) -> tuple[bool,
         bf.min_profit_pct = None
         bf.max_entry = None
     elif action == 'cat':
+        if value not in ALL_CATEGORIES:
+            return False, None
         current = set(bf.categories_list() or ALL_CATEGORIES)
         if value in current:
             if len(current) == 1:
@@ -385,6 +461,8 @@ def apply_filter_callback(bf: BotFilter, action: str, value: str) -> tuple[bool,
             current.add(value)
         bf.categories = None if current == set(ALL_CATEGORIES) else ','.join(sorted(current))
     elif action == 'risk':
+        if value not in ALL_RISKS:
+            return False, None
         current = set(bf.risk_list() or ALL_RISKS)
         if value in current:
             if len(current) == 1:
@@ -394,10 +472,14 @@ def apply_filter_callback(bf: BotFilter, action: str, value: str) -> tuple[bool,
             current.add(value)
         bf.risk_levels = None if current == set(ALL_RISKS) else ','.join(sorted(current))
     elif action == 'profit':
-        p = float(value)
+        p = _preset_value(value, PROFIT_PRESETS)
+        if p is None:
+            return False, None
         bf.min_profit_pct = None if p == 0 else p
     elif action == 'entry':
-        e = float(value)
+        e = _preset_value(value, ENTRY_PRESETS)
+        if e is None:
+            return False, None
         bf.max_entry = None if e == 0 else e
     else:
         return False, None
@@ -407,8 +489,24 @@ def apply_filter_callback(bf: BotFilter, action: str, value: str) -> tuple[bool,
 
 # ──────────────────── Outbox-диспетчер ────────────────────
 
+def _deal_event_still_relevant(n: BotNotification, user: User) -> bool:
+    """Перепроверка deal-события на момент ДОСТАВКИ: сделка всё ещё активна
+    и видима адресату. Иначе (админ сузил видимость / поставил паузу, пока
+    строка ждала в очереди) — событие отменяется, а не доставляется."""
+    if n.investment_id is not None or n.deal_id is None:
+        return True  # персональные события всегда актуальны
+    deal = db.session.get(Deal, n.deal_id)
+    if not deal or deal.status != 'active':
+        return False
+    return deal.user_can_see(user)
+
+
 def dispatch_outbox(api: TelegramAPI, app) -> tuple[int, int]:
-    """Доставляет pending-уведомления. Возвращает (отправлено, ошибок)."""
+    """Доставляет pending-уведомления. Возвращает (отправлено, ошибок).
+
+    Классификация сбоев: permanent (400/403/404) — сразу failed; flood (429) —
+    ждём retry_after и НЕ сжигаем попытку; transient (сеть/5xx) — остаёмся
+    pending и прерываем батч (сеть лежит — нет смысла молотить остальных)."""
     sent = failed = 0
     with app.app_context():
         pending = (BotNotification.query
@@ -424,17 +522,36 @@ def dispatch_outbox(api: TelegramAPI, app) -> tuple[int, int]:
                 db.session.commit()
                 failed += 1
                 continue
-            ok = api.send_message(user.telegram_id, n.message)
-            n.attempts += 1
-            if ok:
+            if not _deal_event_still_relevant(n, user):
+                n.status = 'cancelled'
+                db.session.commit()
+                continue
+            status, retry_after = api.send_message(user.telegram_id, n.message)
+            if status == 'ok':
+                n.attempts += 1
                 n.status = 'sent'
                 n.sent_at = datetime.now(timezone.utc)
+                db.session.commit()
                 sent += 1
-            else:
-                if n.attempts >= MAX_ATTEMPTS:
-                    n.status = 'failed'
+                time.sleep(SEND_PACING_SEC)
+            elif status == 'permanent':
+                n.attempts += 1
+                n.status = 'failed'
+                db.session.commit()
                 failed += 1
-            db.session.commit()
+            elif status == 'flood':
+                # Попытку не сжигаем: лимит Telegram, а не проблема строки
+                wait = min(float(retry_after or 3), 60)
+                logger.info(f'outbox: flood-пауза {wait}с, остаток батча — следующим проходом')
+                time.sleep(wait)
+                break
+            else:  # transient
+                n.attempts += 1
+                if n.attempts >= TRANSIENT_MAX_ATTEMPTS:
+                    n.status = 'failed'
+                    failed += 1
+                db.session.commit()
+                break  # сеть лежит — не жжём попытки остальных строк
     if sent or failed:
         logger.info(f'outbox: отправлено {sent}, ошибок {failed}')
     return sent, failed
@@ -456,6 +573,7 @@ COMMANDS = {
     '/help': cmd_help,
     '/deals': cmd_deals,
     '/feed': cmd_feed,
+    '/myid': cmd_myid,
 }
 
 
@@ -469,7 +587,6 @@ def process_message(api: TelegramAPI, app, msg: dict):
 
     user = resolve_user(from_id)
     if user is None:
-        # /myid отвечаем и неизвестным — иначе им нечего сообщить админу
         api.send_message(chat_id, access_denied_text(from_id))
         logger.info(f'access denied: telegram_id={from_id}')
         return
@@ -478,8 +595,6 @@ def process_message(api: TelegramAPI, app, msg: dict):
     if cmd == '/filters':
         bf = get_or_create_filter(user)
         api.send_message(chat_id, filters_text(bf), reply_markup=filters_keyboard(bf))
-    elif cmd == '/myid':
-        api.send_message(chat_id, cmd_myid(app, user))
     elif cmd in COMMANDS:
         api.send_message(chat_id, COMMANDS[cmd](app, user))
     else:
@@ -487,29 +602,39 @@ def process_message(api: TelegramAPI, app, msg: dict):
 
 
 def process_callback(api: TelegramAPI, app, cb: dict):
+    """Любой исход обязан ответить на callback — иначе у пользователя
+    крутится вечный спиннер (клик при этом уже подтверждён offset'ом)."""
     cb_id = cb.get('id')
-    from_id = (cb.get('from') or {}).get('id')
-    msg = cb.get('message') or {}
-    chat_id = (msg.get('chat') or {}).get('id')
-    message_id = msg.get('message_id')
-    data = cb.get('data') or ''
+    try:
+        from_id = (cb.get('from') or {}).get('id')
+        msg = cb.get('message') or {}
+        chat_id = (msg.get('chat') or {}).get('id')
+        message_id = msg.get('message_id')
+        data = cb.get('data') or ''
 
-    user = resolve_user(from_id)
-    if user is None:
-        api.answer_callback(cb_id, 'Доступ запрещён', show_alert=True)
-        return
+        user = resolve_user(from_id)
+        if user is None:
+            api.answer_callback(cb_id, 'Доступ запрещён', show_alert=True)
+            return
 
-    parts = data.split('|')
-    if len(parts) == 3 and parts[0] == 'f':
-        _, action, value = parts
-        bf = get_or_create_filter(user)
-        changed, alert = apply_filter_callback(bf, action, value)
-        api.answer_callback(cb_id, alert, show_alert=bool(alert))
-        if changed and chat_id and message_id:
-            api.edit_message(chat_id, message_id, filters_text(bf),
-                             reply_markup=filters_keyboard(bf))
-    else:
-        api.answer_callback(cb_id)
+        parts = data.split('|')
+        if len(parts) == 3 and parts[0] == 'f':
+            _, action, value = parts
+            bf = get_or_create_filter(user)
+            changed, alert = apply_filter_callback(bf, action, value)
+            api.answer_callback(cb_id, alert, show_alert=bool(alert))
+            if changed and chat_id and message_id:
+                api.edit_message(chat_id, message_id, filters_text(bf),
+                                 reply_markup=filters_keyboard(bf))
+        else:
+            api.answer_callback(cb_id)
+    except Exception:
+        logger.exception('Ошибка обработки callback')
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        api.answer_callback(cb_id, 'Ошибка, попробуйте ещё раз', show_alert=True)
 
 
 def process_update(api: TelegramAPI, app, upd: dict):
@@ -522,10 +647,19 @@ def process_update(api: TelegramAPI, app, upd: dict):
 
 # ──────────────────── Main ────────────────────
 
+def _ack_updates(api: TelegramAPI, offset: int):
+    """Подтверждает обработанные апдейты (getUpdates с новым offset)."""
+    try:
+        api.get_updates(offset=offset, poll_timeout=0)
+    except Exception as e:
+        logger.warning(f'ack updates: {e}')
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='Телеграм-бот Группы Титан')
     parser.add_argument('--once', action='store_true',
-                        help='Один проход outbox + один getUpdates и выход (smoke-режим)')
+                        help='Один проход outbox + один getUpdates и выход (smoke-режим). '
+                             'НЕ запускать при работающем сервисе — будут дубли доставки.')
     args = parser.parse_args()
 
     # Импорт здесь: app.py при импорте создаёт таблицы (db.create_all) —
@@ -537,14 +671,25 @@ def main() -> int:
     poll_timeout = int(app.config.get('BOT_POLL_TIMEOUT', 25))
     outbox_interval = int(app.config.get('BOT_OUTBOX_INTERVAL', 5))
 
+    if not token:
+        # Чистый выход (не краш): systemd с Restart=on-failure не будет
+        # рестартить юнит каждые 10 секунд, пока токен не заполнен
+        logger.error('Токен не задан (TELEGRAM_USER_BOT_TOKEN/TELEGRAM_BOT_TOKEN) — бот не запущен')
+        return 0
+
     api = TelegramAPI(token, proxy)
 
     if args.once:
         sent, failed = dispatch_outbox(api, app)
         try:
-            updates = api.get_updates(offset=0, poll_timeout=0)
+            offset = load_offset()
+            updates = api.get_updates(offset=offset, poll_timeout=0)
             for upd in updates:
+                offset = max(offset, upd.get('update_id', 0) + 1)
                 process_update(api, app, upd)
+            if updates:
+                _ack_updates(api, offset)  # без подтверждения апдейты пришли бы повторно
+                save_offset(offset)
             print(f'--once: outbox sent={sent} failed={failed}, updates={len(updates)}')
         except Exception as e:
             print(f'--once: outbox sent={sent} failed={failed}, getUpdates error: {e}')
@@ -558,25 +703,39 @@ def main() -> int:
         logger.error(f'getMe не прошёл — проверьте токен/прокси: {e}')
         return 1
 
-    api.set_my_commands()
+    # Меню команд выставляем только у ВЫДЕЛЕННОГО бота: если токен общий с
+    # ботом групповых уведомлений, не перетираем его команды интерфейсом инвесторов
+    if app.config.get('TELEGRAM_USER_BOT_TOKEN') != app.config.get('TELEGRAM_BOT_TOKEN'):
+        api.set_my_commands()
+    else:
+        logger.info('Общий токен с групповым ботом — setMyCommands пропущен '
+                    '(заведите отдельного бота через TELEGRAM_USER_BOT_TOKEN)')
 
     stop = threading.Event()
     t = threading.Thread(target=outbox_loop, args=(api, app, outbox_interval, stop),
                          daemon=True, name='outbox')
     t.start()
 
-    offset = 0
+    offset = load_offset()
     try:
         while True:
             try:
                 updates = api.get_updates(offset, poll_timeout)
-            except (HTTPError, URLError, OSError, RuntimeError) as e:
-                if '409' in str(e) or 'Conflict' in str(e):
+            except TelegramApiError as e:
+                if e.status == 409:
                     logger.error('getUpdates 409: другой процесс уже поллит этого бота. Пауза 30с.')
                     time.sleep(30)
                 else:
                     logger.warning(f'getUpdates: {e}; пауза 5с')
                     time.sleep(5)
+                continue
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                # Сюда попадают и JSONDecodeError (прокси отдал HTML со статусом 200),
+                # и IncompleteRead (оборванный long-poll) — краш-луп недопустим
+                logger.warning(f'getUpdates: {e.__class__.__name__}: {e}; пауза 5с')
+                time.sleep(5)
                 continue
             for upd in updates:
                 offset = max(offset, upd.get('update_id', 0) + 1)
@@ -584,6 +743,8 @@ def main() -> int:
                     process_update(api, app, upd)
                 except Exception as e:
                     logger.exception(f'Ошибка обработки апдейта: {e}')
+            if updates:
+                save_offset(offset)
     except KeyboardInterrupt:
         logger.info('Остановка по Ctrl+C')
     finally:

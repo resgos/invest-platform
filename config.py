@@ -1,9 +1,46 @@
 import os
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSTANCE_DIR = os.path.join(_BASE_DIR, 'instance')
+
+# Каталог instance/ нужен ВСЕМ процессам (веб, tg_bot, CLI) до первого обращения
+# к SQLite/secret_key — создаём при импорте конфига, а не как побочный эффект.
+try:
+    os.makedirs(_INSTANCE_DIR, exist_ok=True)
+except OSError:
+    pass
+
+
+def _int_env(name, default):
+    """int() из env с fallback: опечатка в переменной не должна ронять процесс."""
+    raw = os.getenv(name, '')
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        import logging
+        logging.getLogger(__name__).warning(
+            f'{name}={raw!r} — не число, использую дефолт {default}')
+        return default
+
+
+def _normalize_db_uri(uri):
+    """Относительный sqlite-путь превращаем в абсолютный от корня проекта.
+
+    Иначе Flask-SQLAlchemy резолвит его от instance_path (документированный
+    в .env.example `sqlite:///instance/invest.db` превратился бы в
+    instance/instance/invest.db), а процессы с разным CWD/способом запуска
+    могли бы смотреть в разные файлы.
+    """
+    prefix = 'sqlite:///'
+    if uri and uri.startswith(prefix):
+        path = uri[len(prefix):]
+        if path and not os.path.isabs(path) and not path.startswith(':memory:'):
+            return prefix + os.path.join(_BASE_DIR, path).replace(os.sep, '/')
+    return uri
 
 
 def _persistent_secret_key():
@@ -11,28 +48,47 @@ def _persistent_secret_key():
 
     Случайный ключ в памяти ломает сессии при рестарте и между gunicorn-воркерами
     (каждый форк получил бы свой ключ) — поэтому недостающий ключ сохраняем в файл.
+    Пустой файл (краш между созданием и записью) считается отсутствующим — иначе
+    все последующие старты молча получали бы SECRET_KEY='' и сайт лежал бы 500-ми.
     """
     key = os.getenv('SECRET_KEY')
     if key:
         return key
-    instance_dir = os.path.join(_BASE_DIR, 'instance')
-    key_file = os.path.join(instance_dir, 'secret_key')
-    try:
-        if os.path.exists(key_file):
+    key_file = os.path.join(_INSTANCE_DIR, 'secret_key')
+
+    def _read_key():
+        try:
             with open(key_file, 'r', encoding='utf-8') as f:
-                stored = f.read().strip()
-            if stored:
-                return stored
-        os.makedirs(instance_dir, exist_ok=True)
+                return f.read().strip()
+        except OSError:
+            return ''
+
+    try:
+        stored = _read_key()
+        if stored:
+            return stored
+        if os.path.exists(key_file):
+            # Файл есть, но пуст — осиротевший после краша, убираем и пересоздаём
+            try:
+                os.remove(key_file)
+            except OSError:
+                pass
         new_key = os.urandom(64).hex()
         fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(new_key)
+            f.flush()
+            os.fsync(f.fileno())
         return new_key
     except FileExistsError:
-        # Параллельный воркер успел первым — читаем его ключ
-        with open(key_file, 'r', encoding='utf-8') as f:
-            return f.read().strip()
+        # Параллельный воркер успел первым — ждём, пока он допишет ключ
+        for _ in range(20):
+            stored = _read_key()
+            if stored:
+                return stored
+            time.sleep(0.05)
+        # Писатель так и не дописал — генерим свой (хуже, чем общий, но не '')
+        return os.urandom(64).hex()
     except OSError:
         # ФС недоступна на запись — деградируем на случайный ключ (dev-режим)
         return os.urandom(64).hex()
@@ -42,11 +98,12 @@ class Config:
     SECRET_KEY = _persistent_secret_key()
     # Исторически .env.example документировал DATABASE_URL, а код читал DATABASE_URI —
     # поддерживаем оба имени (URL приоритетнее как документированный).
-    # Дефолт — АБСОЛЮТНЫЙ путь: относительный sqlite-путь разъезжается между
-    # процессами (веб и tg_bot) при разном CWD/способе запуска.
-    SQLALCHEMY_DATABASE_URI = (os.getenv('DATABASE_URL')
-                               or os.getenv('DATABASE_URI')
-                               or 'sqlite:///' + os.path.join(_BASE_DIR, 'instance', 'invest.db').replace(os.sep, '/'))
+    # Относительные sqlite-пути нормализуются к корню проекта (см. _normalize_db_uri),
+    # дефолт — абсолютный instance/invest.db.
+    SQLALCHEMY_DATABASE_URI = _normalize_db_uri(
+        os.getenv('DATABASE_URL')
+        or os.getenv('DATABASE_URI')
+        or 'sqlite:///' + os.path.join(_BASE_DIR, 'instance', 'invest.db').replace(os.sep, '/'))
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
         'pool_pre_ping': True,
@@ -87,9 +144,9 @@ class Config:
     # можно завести отдельного бота через TELEGRAM_USER_BOT_TOKEN.
     TELEGRAM_USER_BOT_TOKEN = os.getenv('TELEGRAM_USER_BOT_TOKEN', '') or os.getenv('TELEGRAM_BOT_TOKEN', '')
     # Период проверки outbox-уведомлений ботом, сек
-    BOT_OUTBOX_INTERVAL = int(os.getenv('BOT_OUTBOX_INTERVAL', '5'))
+    BOT_OUTBOX_INTERVAL = _int_env('BOT_OUTBOX_INTERVAL', 5)
     # Таймаут long-poll getUpdates, сек
-    BOT_POLL_TIMEOUT = int(os.getenv('BOT_POLL_TIMEOUT', '25'))
+    BOT_POLL_TIMEOUT = _int_env('BOT_POLL_TIMEOUT', 25)
     # Публичный URL платформы — для ссылок на сделки в сообщениях бота
     # (пусто = ссылки не добавляются)
     SITE_URL = os.getenv('SITE_URL', '').rstrip('/')

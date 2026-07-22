@@ -250,6 +250,36 @@ class Deal(db.Model):
             return True
         return False
 
+    def accepts_investors(self, today=None):
+        """Единое бизнес-правило «сделка принимает новых инвесторов»:
+        активна, срок приёма не истёк, фиксированный старт ещё не наступил.
+        Используется роутом invest, шиной бота и каталогом (SQL-версия ниже) —
+        менять политику ТОЛЬКО здесь."""
+        today = today or date.today()
+        if self.status != 'active':
+            return False
+        if self.date_end and self.date_end < today:
+            return False
+        if self.date_start and self.date_start <= today:
+            return False
+        return True
+
+    @classmethod
+    def accepting_criteria(cls, today=None):
+        """SQL-эквивалент accepts_investors для query.filter(*...)."""
+        today = today or date.today()
+        return [
+            cls.status == 'active',
+            db.or_(cls.date_end.is_(None), cls.date_end >= today),
+            db.or_(cls.date_start.is_(None), cls.date_start > today),
+        ]
+
+    @classmethod
+    def visible_to_user_criteria(cls, user):
+        """SQL-предикат видимости сделок пользователю (админ видит всё —
+        вызывающий код не применяет предикат для админа)."""
+        return db.or_(cls.visibility == 'all', cls.visible_to.any(id=user.id))
+
 
 class Investment(db.Model):
     """
@@ -419,9 +449,12 @@ class BotNotification(db.Model):
                         nullable=True, index=True)
     investment_id = db.Column(db.Integer, db.ForeignKey('investments.id'), nullable=True)
     event_type = db.Column(db.String(40), nullable=False, index=True)
-    # deal_published | deal_starting | investment_confirmed | investment_rejected | investment_closed
+    # deal_published | deal_starting_<N> | investment_confirmed | investment_rejected
+    # | investment_closed | profit_paid
     message = db.Column(db.Text, nullable=False)
-    status = db.Column(db.String(20), nullable=False, default='pending', index=True)  # pending|sent|failed
+    # pending → sent | failed (перманентная ошибка/исчерпаны ретраи)
+    #         | cancelled (сделка скрыта/на паузе к моменту доставки)
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)
     attempts = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     sent_at = db.Column(db.DateTime, nullable=True)

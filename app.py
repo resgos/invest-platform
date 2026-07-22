@@ -5,6 +5,7 @@ from functools import wraps
 from dateutil.relativedelta import relativedelta
 
 import bcrypt
+from sqlalchemy.exc import IntegrityError
 from flask import (Flask, render_template, request, redirect, url_for,
                    flash, send_from_directory, session, jsonify, abort)
 from flask_wtf.csrf import CSRFProtect
@@ -14,7 +15,8 @@ from flask_login import LoginManager, login_user, logout_user, login_required, c
 from werkzeug.utils import secure_filename
 
 from config import Config
-from models import db, User, Deal, Investment, Transaction, AuditLog, deal_visibility
+from models import (db, User, Deal, Investment, Transaction, AuditLog,
+                    BotNotification, deal_visibility)
 from forms import (LoginForm, CreateUserForm, EditUserForm, DealForm,
                    ExistingDealForm, ChangePasswordForm)
 from telegram_notify import notify_investment, notify_investment_status, test_connection as tg_test_connection
@@ -142,6 +144,21 @@ def create_app():
             except Exception:
                 pass
             return None
+
+    def parse_telegram_id(raw):
+        """Telegram ID из поля формы: None при пустом/пробельном вводе.
+        Optional() в WTForms пропускает whitespace-only мимо regex-валидатора —
+        без strip-гарда int('') ронял бы роут 500-й."""
+        s = str(raw or '').strip()
+        return int(s) if s.isdigit() else None
+
+    def telegram_id_taken(tg_id, exclude_user_id=None):
+        if not tg_id:
+            return False
+        q = User.query.filter(User.telegram_id == tg_id)
+        if exclude_user_id:
+            q = q.filter(User.id != exclude_user_id)
+        return q.first() is not None
 
     def safe_float(val, default=0):
         """Парсит число из пользовательского ввода. Поддерживает оба формата:
@@ -301,24 +318,17 @@ def create_app():
         user = current_user if current_user.is_authenticated else None
 
         # Stats - только активные сделки, ещё не стартовавшие (или без фикс. старта),
-        # и только видимые пользователю
+        # и только видимые пользователю (канон предикатов — методы Deal)
         today = date.today()
         hot_horizon = today + timedelta(days=Deal.HOT_THRESHOLD_DAYS)
-        not_started_filter = db.or_(Deal.date_start.is_(None), Deal.date_start > today)
-        not_expired_filter = db.or_(Deal.date_end.is_(None), Deal.date_end >= today)
 
+        deals_q = Deal.query.filter(*Deal.accepting_criteria(today))
         if user and user.is_admin:
-            deals_q = Deal.query.filter(Deal.status == 'active', not_started_filter, not_expired_filter)
+            pass  # админ видит всё
         elif user:
-            deals_q = Deal.query.filter(
-                Deal.status == 'active', not_started_filter, not_expired_filter,
-                db.or_(Deal.visibility == 'all', Deal.visible_to.any(id=user.id))
-            )
+            deals_q = deals_q.filter(Deal.visible_to_user_criteria(user))
         else:
-            deals_q = Deal.query.filter(
-                Deal.status == 'active', not_started_filter, not_expired_filter,
-                Deal.visibility == 'all'
-            )
+            deals_q = deals_q.filter(Deal.visibility == 'all')
 
         total_ads = deals_q.count()
         total_invested = db.session.query(db.func.coalesce(db.func.sum(Investment.amount), 0)).filter_by(status='active').scalar()
@@ -357,23 +367,14 @@ def create_app():
         if current_user.is_admin:
             q = Deal.query
         else:
-            q = Deal.query.filter(
-                db.or_(
-                    Deal.visibility == 'all',
-                    Deal.visible_to.any(id=current_user.id)
-                )
-            )
+            q = Deal.query.filter(Deal.visible_to_user_criteria(current_user))
 
         # Tab filter. Сделка «активна» в каталоге, пока ещё не стартовала
         # (либо у неё нет фиксированного старта). После date_start уходит в архив.
         today = date.today()
         hot_horizon = today + timedelta(days=Deal.HOT_THRESHOLD_DAYS)
         if tab == 'active':
-            q = q.filter(
-                Deal.status == 'active',
-                db.or_(Deal.date_end.is_(None), Deal.date_end >= today),
-                db.or_(Deal.date_start.is_(None), Deal.date_start > today)
-            )
+            q = q.filter(*Deal.accepting_criteria(today))
         elif tab == 'hot':
             q = q.filter(
                 Deal.status == 'active',
@@ -439,14 +440,8 @@ def create_app():
         if current_user.is_admin:
             base_q = Deal.query
         else:
-            base_q = Deal.query.filter(
-                db.or_(Deal.visibility == 'all', Deal.visible_to.any(id=current_user.id))
-            )
-        active_count = base_q.filter(
-            Deal.status == 'active',
-            db.or_(Deal.date_end.is_(None), Deal.date_end >= today),
-            db.or_(Deal.date_start.is_(None), Deal.date_start > today)
-        ).count()
+            base_q = Deal.query.filter(Deal.visible_to_user_criteria(current_user))
+        active_count = base_q.filter(*Deal.accepting_criteria(today)).count()
         hot_count = base_q.filter(
             Deal.status == 'active',
             Deal.date_start.isnot(None),
@@ -580,6 +575,12 @@ def create_app():
                 f'— сделка уже в работе.',
                 'error'
             )
+            return redirect(url_for('deal_detail', deal_id=deal.id))
+        # Страховка от дрейфа: каноническое правило живёт в Deal.accepts_investors —
+        # если политика расширится, а точечные проверки выше отстанут, заявка всё
+        # равно не пройдёт мимо общего правила
+        if not deal.accepts_investors(date.today()):
+            flash('Сделка не принимает заявки', 'error')
             return redirect(url_for('deal_detail', deal_id=deal.id))
 
         amount = safe_float(request.form.get('amount', 0))
@@ -802,8 +803,8 @@ def create_app():
                 flash('Пользователь с таким логином или email уже существует', 'error')
                 return render_template('admin_create_user.html', form=form)
 
-            tg_id = int(form.telegram_id.data.strip()) if form.telegram_id.data else None
-            if tg_id and User.query.filter_by(telegram_id=tg_id).first():
+            tg_id = parse_telegram_id(form.telegram_id.data)
+            if telegram_id_taken(tg_id):
                 flash('Этот Telegram ID уже привязан к другому пользователю', 'error')
                 return render_template('admin_create_user.html', form=form)
 
@@ -817,7 +818,13 @@ def create_app():
                 role=form.role.data
             )
             db.session.add(user)
-            db.session.commit()
+            try:
+                db.session.commit()
+            except IntegrityError:
+                # Гонка двух вкладок/воркеров на уникальных полях — не 500
+                db.session.rollback()
+                flash('Логин, email или Telegram ID уже заняты (параллельное изменение)', 'error')
+                return render_template('admin_create_user.html', form=form)
 
             log_action('user_created', 'user', user.id, f'role={user.role}')
             flash(f'Пользователь {user.full_name} создан. Логин: {user.username}', 'success')
@@ -836,8 +843,8 @@ def create_app():
                 flash('Email уже используется', 'error')
                 return render_template('admin_edit_user.html', form=form, user=user)
 
-            tg_id = int(str(form.telegram_id.data).strip()) if form.telegram_id.data else None
-            if tg_id and User.query.filter(User.telegram_id == tg_id, User.id != user.id).first():
+            tg_id = parse_telegram_id(form.telegram_id.data)
+            if telegram_id_taken(tg_id, exclude_user_id=user.id):
                 flash('Этот Telegram ID уже привязан к другому пользователю', 'error')
                 return render_template('admin_edit_user.html', form=form, user=user)
 
@@ -850,7 +857,12 @@ def create_app():
             if form.new_password.data:
                 user.password_hash = hash_password(form.new_password.data)
 
-            db.session.commit()
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                flash('Email или Telegram ID уже заняты (параллельное изменение)', 'error')
+                return render_template('admin_edit_user.html', form=form, user=user)
             log_action('user_updated', 'user', user.id)
             flash('Пользователь обновлён', 'success')
             return redirect(url_for('admin_users'))
@@ -1081,6 +1093,11 @@ def create_app():
             flash('Нельзя удалить сделку с инвестициями. Поставьте на паузу.', 'error')
             return redirect(url_for('admin_dashboard'))
         title = deal.title
+        # Доставленные уведомления — история ленты /feed пользователя: отвязываем
+        # от сделки (текст денормализован), чтобы FK-каскад не стёр их вместе с ней.
+        # Недоставленные (pending) каскад удалит — по удалённой сделке слать нечего.
+        BotNotification.query.filter_by(deal_id=deal.id, status='sent').update(
+            {'deal_id': None})
         db.session.delete(deal)
         db.session.commit()
         log_action('deal_deleted', 'deal', deal_id, f'title={title}')
@@ -1149,6 +1166,12 @@ def create_app():
             db.session.commit()
             log_action('existing_investment_created', 'investment', inv.id,
                        f'user={user.username}, deal={deal.title}, amount={form.amount.data}')
+            # Телеграм-события: активная инвестиция = аналог подтверждения;
+            # доступ к сделке расширен — дедуп отсечёт уже уведомлённых
+            if inv.status == 'active':
+                emit_bot_event(bot_events.emit_investment_event, inv,
+                               bot_events.EVENT_INV_CONFIRMED)
+            emit_bot_event(bot_events.emit_deal_published, deal)
             flash(f'Сделка для {user.full_name} зарегистрирована', 'success')
             return redirect(url_for('admin_dashboard'))
 
@@ -1279,6 +1302,10 @@ def create_app():
             )
             db.session.add(txn)
             db.session.commit()
+            # Начисление прибыли — единственный денежный переход, который
+            # инвестор иначе не увидел бы в телеграме
+            emit_bot_event(bot_events.emit_investment_event, inv,
+                           bot_events.EVENT_PROFIT_PAID, amount_paid=diff)
 
         log_action('profit_updated', 'investment', inv.id,
                    f'actual_profit={new_profit}, old={old_profit}')

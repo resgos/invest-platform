@@ -60,7 +60,7 @@ def main() -> int:
 
     # Импортируем приложение лениво — чтобы --help работал без зависимостей
     from app import app
-    from models import Deal
+    from models import db, Deal
     from telegram_notify import notify_upcoming_deal
     import bot_events
 
@@ -105,14 +105,23 @@ def main() -> int:
             except Exception as e:
                 print(f'  ✗ #{deal.id} {deal.title} — ошибка: {e}', file=sys.stderr)
 
-            # Персональные уведомления через бота (outbox; дедуп по уникальному
-            # индексу — повторный запуск скрипта дублей не создаст)
-            try:
-                saved = bot_events.emit_deal_starting(app, deal, args.days)
-                if saved:
-                    print(f'    → бот: сохранено {saved} персональных уведомлений')
-            except Exception as e:
-                print(f'    → бот: ошибка сохранения — {e}', file=sys.stderr)
+        # Персональные уведомления через бота — НЕЗАВИСИМО от state-файла
+        # группового канала: у outbox свой DB-дедуп, а гейт по already_notified
+        # терял бы бот-события навсегда, если первая эмиссия упала после
+        # успешной групповой отправки. Rollback обязателен: сбой commit без
+        # отката оставил бы сессию в failed-состоянии и уронил остальные сделки.
+        if not args.dry_run:
+            for deal in deals:
+                try:
+                    saved = bot_events.emit_deal_starting(app, deal, args.days)
+                    if saved:
+                        print(f'  → бот: #{deal.id} — сохранено {saved} персональных уведомлений')
+                except Exception as e:
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
+                    print(f'  → бот: #{deal.id} — ошибка сохранения: {e}', file=sys.stderr)
 
     if not args.dry_run and not args.force and sent_ids:
         state.setdefault(state_key, {})[target_date.isoformat()] = list(already_notified | set(sent_ids))

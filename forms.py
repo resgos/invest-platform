@@ -7,6 +7,13 @@ import re
 from datetime import date
 
 
+def _validate_telegram_id(field):
+    """Единая проверка Telegram ID для форм создания и редактирования.
+    До 16 цифр — Bot API гарантирует ID в пределах 52 бит (~4.5×10^15)."""
+    if field.data and not re.match(r'^\d{1,16}$', str(field.data).strip()):
+        raise ValidationError('Telegram ID — только цифры (узнать: @userinfobot или /myid у бота)')
+
+
 class LoginForm(FlaskForm):
     username = StringField('Логин', validators=[
         DataRequired(message='Введите логин'),
@@ -46,8 +53,7 @@ class CreateUserForm(FlaskForm):
             raise ValidationError('Только латинские буквы, цифры и _')
 
     def validate_telegram_id(self, field):
-        if field.data and not re.match(r'^\d{1,15}$', field.data.strip()):
-            raise ValidationError('Telegram ID — только цифры (узнать: @userinfobot или /myid у бота)')
+        _validate_telegram_id(field)
 
     def validate_password(self, field):
         pw = field.data
@@ -77,8 +83,7 @@ class EditUserForm(FlaskForm):
     ])
 
     def validate_telegram_id(self, field):
-        if field.data and not re.match(r'^\d{1,15}$', field.data.strip()):
-            raise ValidationError('Telegram ID — только цифры (узнать: @userinfobot или /myid у бота)')
+        _validate_telegram_id(field)
 
 
 class DealForm(FlaskForm):

@@ -10,8 +10,12 @@ WorkingDirectory=/home/deploy/gruppa-titan
 EnvironmentFile=/home/deploy/gruppa-titan/.env
 Environment=PATH=/home/deploy/gruppa-titan/venv/bin
 ExecStart=/home/deploy/gruppa-titan/venv/bin/python tg_bot.py
-Restart=always
+# on-failure: при незаполненном токене бот выходит с кодом 0 и юнит
+# останавливается, а не крутит вечный рестарт-цикл каждые 10 секунд
+Restart=on-failure
 RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=10
 StandardOutput=journal
 StandardError=journal
 
