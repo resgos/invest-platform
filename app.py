@@ -20,6 +20,7 @@ from forms import (LoginForm, CreateUserForm, EditUserForm, DealForm,
 from telegram_notify import notify_investment, notify_investment_status, test_connection as tg_test_connection
 from db_backup import (create_snapshot, list_snapshots, restore_snapshot,
                        delete_snapshot, get_db_info)
+import bot_events
 
 
 # ──────────────────── App Factory ────────────────────
@@ -128,6 +129,19 @@ def create_app():
         )
         db.session.add(entry)
         db.session.commit()
+
+    def emit_bot_event(fn, *args, **kwargs):
+        """Сохранение события для телеграм-бота: сбой шины не должен ломать
+        основной admin-флоу — логируем и продолжаем."""
+        try:
+            return fn(app, *args, **kwargs)
+        except Exception as e:
+            app.logger.error(f'bot_events: ошибка сохранения события — {e}')
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            return None
 
     def safe_float(val, default=0):
         """Парсит число из пользовательского ввода. Поддерживает оба формата:
@@ -788,11 +802,17 @@ def create_app():
                 flash('Пользователь с таким логином или email уже существует', 'error')
                 return render_template('admin_create_user.html', form=form)
 
+            tg_id = int(form.telegram_id.data.strip()) if form.telegram_id.data else None
+            if tg_id and User.query.filter_by(telegram_id=tg_id).first():
+                flash('Этот Telegram ID уже привязан к другому пользователю', 'error')
+                return render_template('admin_create_user.html', form=form)
+
             user = User(
                 username=form.username.data.strip(),
                 email=form.email.data.strip().lower(),
                 full_name=form.full_name.data.strip(),
                 phone=form.phone.data.strip() if form.phone.data else None,
+                telegram_id=tg_id,
                 password_hash=hash_password(form.password.data),
                 role=form.role.data
             )
@@ -816,9 +836,15 @@ def create_app():
                 flash('Email уже используется', 'error')
                 return render_template('admin_edit_user.html', form=form, user=user)
 
+            tg_id = int(str(form.telegram_id.data).strip()) if form.telegram_id.data else None
+            if tg_id and User.query.filter(User.telegram_id == tg_id, User.id != user.id).first():
+                flash('Этот Telegram ID уже привязан к другому пользователю', 'error')
+                return render_template('admin_edit_user.html', form=form, user=user)
+
             user.full_name = form.full_name.data.strip()
             user.email = form.email.data.strip().lower()
             user.phone = form.phone.data.strip() if form.phone.data else None
+            user.telegram_id = tg_id
             user.is_active = form.is_active.data
 
             if form.new_password.data:
@@ -830,7 +856,7 @@ def create_app():
             return redirect(url_for('admin_users'))
         return render_template('admin_edit_user.html', form=form, user=user)
 
-    @app.route('/admin/users/<int:user_id>/toggle')
+    @app.route('/admin/users/<int:user_id>/toggle', methods=['POST'])
     @admin_required
     def admin_toggle_user(user_id):
         user = User.query.get_or_404(user_id)
@@ -914,6 +940,7 @@ def create_app():
 
             db.session.commit()
             log_action('deal_created', 'deal', deal.id, f'title={deal.title}')
+            emit_bot_event(bot_events.emit_deal_published, deal)
             flash('Предложение создано', 'success')
             return redirect(url_for('admin_dashboard'))
 
@@ -1000,6 +1027,9 @@ def create_app():
 
             db.session.commit()
             log_action('deal_updated', 'deal', deal.id)
+            # Дедуп по (user, deal, event): событие получат только пользователи,
+            # которым сделка стала видна впервые
+            emit_bot_event(bot_events.emit_deal_published, deal)
             flash('Предложение обновлено', 'success')
             return redirect(url_for('admin_dashboard'))
 
@@ -1024,18 +1054,22 @@ def create_app():
                         deal.visible_to.append(u)
             db.session.commit()
             log_action('visibility_updated', 'deal', deal.id, f'visibility={vis}')
+            emit_bot_event(bot_events.emit_deal_published, deal)
             flash('Видимость обновлена', 'success')
             return redirect(url_for('admin_dashboard'))
 
         return render_template('edit_visibility.html', ad=deal, investors=investors, assigned_ids=assigned_ids)
 
-    @app.route('/admin/deals/<int:deal_id>/toggle')
+    @app.route('/admin/deals/<int:deal_id>/toggle', methods=['POST'])
     @admin_required
     def toggle_deal(deal_id):
         deal = Deal.query.get_or_404(deal_id)
         deal.status = 'paused' if deal.status == 'active' else 'active'
         db.session.commit()
         log_action('deal_toggled', 'deal', deal.id, f'status={deal.status}')
+        if deal.status == 'active':
+            # Реактивация после паузы: событие получат только те, кто ещё не получал
+            emit_bot_event(bot_events.emit_deal_published, deal)
         flash('Статус обновлён', 'success')
         return redirect(url_for('admin_dashboard'))
 
@@ -1179,6 +1213,7 @@ def create_app():
             status='confirmed',
             admin_name=current_user.full_name
         )
+        emit_bot_event(bot_events.emit_investment_event, inv, bot_events.EVENT_INV_CONFIRMED)
 
         flash(f'Инвестиция {inv.amount:,.0f} руб. от {investor.full_name} подтверждена', 'success')
         return redirect(url_for('admin_pending_investments'))
@@ -1217,6 +1252,7 @@ def create_app():
             status='rejected',
             admin_name=current_user.full_name
         )
+        emit_bot_event(bot_events.emit_investment_event, inv, bot_events.EVENT_INV_REJECTED)
 
         flash(f'Заявка от {investor.full_name} отклонена', 'warning')
         return redirect(url_for('admin_pending_investments'))
@@ -1331,6 +1367,7 @@ def create_app():
             )
         except Exception:
             pass
+        emit_bot_event(bot_events.emit_investment_event, inv, bot_events.EVENT_INV_CLOSED)
 
         flash(f'Инвестиция закрыта. Прибыль: {actual_profit:,.0f} ₽', 'success')
         return redirect(request.referrer or url_for('admin_dashboard'))

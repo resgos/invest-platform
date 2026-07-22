@@ -96,8 +96,25 @@ if [[ -f "$SERVICE_SOURCE" ]] && [[ -f "$SERVICE_TARGET" ]] && ! cmp -s "$SERVIC
     systemctl daemon-reload
 fi
 
+# Телеграм-бот: устанавливаем юнит при первом апдейте, обновляем при изменении
+BOT_SERVICE="${SERVICE_NAME}-bot"
+BOT_SOURCE="$APP_DIR/deploy/${BOT_SERVICE}.service"
+BOT_TARGET="/etc/systemd/system/${BOT_SERVICE}.service"
+if [[ -f "$BOT_SOURCE" ]]; then
+    if [[ ! -f "$BOT_TARGET" ]] || ! cmp -s "$BOT_SOURCE" "$BOT_TARGET"; then
+        info "Юнит ${BOT_SERVICE} новый/изменился — устанавливаем"
+        cp "$BOT_SOURCE" "$BOT_TARGET"
+        systemctl daemon-reload
+        systemctl enable "$BOT_SERVICE" >/dev/null 2>&1 || true
+    fi
+fi
+
 info "Перезапуск сервиса ${SERVICE_NAME}..."
 systemctl restart "$SERVICE_NAME"
+if [[ -f "$BOT_TARGET" ]]; then
+    info "Перезапуск бота ${BOT_SERVICE}..."
+    systemctl restart "$BOT_SERVICE" || warn "Бот не стартовал (проверьте токен): journalctl -u $BOT_SERVICE -n 30"
+fi
 sleep 2
 if systemctl is-active --quiet "$SERVICE_NAME"; then
     ok "Обновление завершено: $OLD_COMMIT → $NEW_COMMIT, сервис работает"

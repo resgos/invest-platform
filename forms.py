@@ -31,6 +31,7 @@ class CreateUserForm(FlaskForm):
         Length(max=150)
     ])
     phone = StringField('Телефон', validators=[Optional(), Length(max=30)])
+    telegram_id = StringField('Telegram ID', validators=[Optional(), Length(max=20)])
     password = PasswordField('Пароль', validators=[
         DataRequired(message='Введите пароль'),
         Length(min=8, message='Минимум 8 символов')
@@ -43,6 +44,10 @@ class CreateUserForm(FlaskForm):
     def validate_username(self, field):
         if not re.match(r'^[a-zA-Z0-9_]+$', field.data):
             raise ValidationError('Только латинские буквы, цифры и _')
+
+    def validate_telegram_id(self, field):
+        if field.data and not re.match(r'^\d{1,15}$', field.data.strip()):
+            raise ValidationError('Telegram ID — только цифры (узнать: @userinfobot или /myid у бота)')
 
     def validate_password(self, field):
         pw = field.data
@@ -64,11 +69,16 @@ class EditUserForm(FlaskForm):
         Email(message='Некорректный email')
     ])
     phone = StringField('Телефон', validators=[Optional(), Length(max=30)])
+    telegram_id = StringField('Telegram ID', validators=[Optional(), Length(max=20)])
     is_active = BooleanField('Активен')
     new_password = PasswordField('Новый пароль (оставьте пустым для сохранения)', validators=[
         Optional(),
         Length(min=8, message='Минимум 8 символов')
     ])
+
+    def validate_telegram_id(self, field):
+        if field.data and not re.match(r'^\d{1,15}$', field.data.strip()):
+            raise ValidationError('Telegram ID — только цифры (узнать: @userinfobot или /myid у бота)')
 
 
 class DealForm(FlaskForm):

@@ -15,8 +15,13 @@ import argparse
 import os
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from contextlib import closing
+
+# Windows-консоль (cp1251/cp866) падает на '✓' — печатаем в UTF-8 с заменой
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, 'reconfigure'):
+        _stream.reconfigure(encoding='utf-8', errors='replace')
 
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'invest.db')
@@ -51,7 +56,7 @@ def already_applied(c: sqlite3.Cursor, version: str) -> bool:
 def mark_applied(c: sqlite3.Cursor, version: str) -> None:
     c.execute(
         "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-        (version, datetime.utcnow().isoformat()),
+        (version, datetime.now(timezone.utc).isoformat()),
     )
 
 
@@ -131,11 +136,28 @@ def m_004_deal_market_value(c: sqlite3.Cursor) -> None:
         c.execute("ALTER TABLE deals ADD COLUMN market_value FLOAT")
 
 
+def m_005_telegram_bot(c: sqlite3.Cursor) -> None:
+    """Телеграм-бот: users.telegram_id + уникальный индекс.
+
+    Таблицы bot_filters/bot_notifications создаёт db.create_all() при старте
+    приложения (для новых таблиц ALTER не нужен) — здесь только колонка в users.
+    """
+    if not table_exists(c, 'users'):
+        return
+    if not col_exists(c, 'users', 'telegram_id'):
+        c.execute("ALTER TABLE users ADD COLUMN telegram_id BIGINT")
+    c.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_telegram_id "
+        "ON users (telegram_id) WHERE telegram_id IS NOT NULL"
+    )
+
+
 MIGRATIONS = [
     ('001_investment_dates', m_001_investment_dates),
     ('002_deal_date_start',  m_002_deal_date_start),
     ('003_investment_manual_profit', m_003_investment_manual_profit),
     ('004_deal_market_value', m_004_deal_market_value),
+    ('005_telegram_bot', m_005_telegram_bot),
 ]
 
 
