@@ -49,11 +49,20 @@
             <div class="params-grid">
               {% if ad.car_brand %}<div class="param-item"><span class="param-label">Марка</span><span class="param-val">{{ ad.car_brand }}</span></div>{% endif %}
               {% if ad.car_model %}<div class="param-item"><span class="param-label">Модель</span><span class="param-val">{{ ad.car_model }}</span></div>{% endif %}
-              {% if ad.car_year %}<div class="param-item"><span class="param-label">Год</span><span class="param-val">{{ ad.car_year }}</span></div>{% endif %}
-              {% if ad.car_power %}<div class="param-item"><span class="param-label">Мощность</span><span class="param-val">{{ ad.car_power }} л.с.</span></div>{% endif %}
+              {% if ad.car_year %}<div class="param-item"><span class="param-label">Год выпуска</span><span class="param-val">{{ ad.car_year }}</span></div>{% endif %}
+              {% if ad.car_body %}<div class="param-item"><span class="param-label">Кузов</span><span class="param-val">{{ CAR_LABELS['body'].get(ad.car_body, ad.car_body) }}</span></div>{% endif %}
               {% if ad.car_mileage %}<div class="param-item"><span class="param-label">Пробег</span><span class="param-val">{{ "{:,}".format(ad.car_mileage).replace(",", " ") }} км</span></div>{% endif %}
-              {% if ad.car_transmission %}<div class="param-item"><span class="param-label">КПП</span><span class="param-val">{{ {'auto':'Автомат','manual':'Механика'}.get(ad.car_transmission, ad.car_transmission) }}</span></div>{% endif %}
-              {% if ad.car_fuel %}<div class="param-item"><span class="param-label">Топливо</span><span class="param-val">{{ {'petrol':'Бензин','diesel':'Дизель','electric':'Электро','hybrid':'Гибрид'}.get(ad.car_fuel, ad.car_fuel) }}</span></div>{% endif %}
+              {% if ad.car_color %}<div class="param-item"><span class="param-label">Цвет</span><span class="param-val">{{ ad.car_color }}</span></div>{% endif %}
+              {% if ad.car_engine_volume %}<div class="param-item"><span class="param-label">Объём двигателя</span><span class="param-val">{{ '%.1f'|format(ad.car_engine_volume) }} л</span></div>{% endif %}
+              {% if ad.car_power %}<div class="param-item"><span class="param-label">Мощность</span><span class="param-val">{{ ad.car_power }} л.с.</span></div>{% endif %}
+              {% if ad.car_fuel %}<div class="param-item"><span class="param-label">Топливо</span><span class="param-val">{{ CAR_LABELS['fuel'].get(ad.car_fuel, ad.car_fuel) }}</span></div>{% endif %}
+              {% if ad.car_transmission %}<div class="param-item"><span class="param-label">КПП</span><span class="param-val">{{ CAR_LABELS['transmission'].get(ad.car_transmission, ad.car_transmission) }}</span></div>{% endif %}
+              {% if ad.car_drive %}<div class="param-item"><span class="param-label">Привод</span><span class="param-val">{{ CAR_LABELS['drive'].get(ad.car_drive, ad.car_drive) }}</span></div>{% endif %}
+              {% if ad.car_wheel %}<div class="param-item"><span class="param-label">Руль</span><span class="param-val">{{ CAR_LABELS['wheel'].get(ad.car_wheel, ad.car_wheel) }}</span></div>{% endif %}
+              {% if ad.car_owners %}<div class="param-item"><span class="param-label">Владельцев по ПТС</span><span class="param-val">{{ CAR_LABELS['owners'].get(ad.car_owners, ad.car_owners) }}</span></div>{% endif %}
+              {% if ad.car_condition %}<div class="param-item"><span class="param-label">Состояние</span><span class="param-val">{{ CAR_LABELS['condition'].get(ad.car_condition, ad.car_condition) }}</span></div>{% endif %}
+              {% if ad.car_pts %}<div class="param-item"><span class="param-label">ПТС</span><span class="param-val">{{ CAR_LABELS['pts'].get(ad.car_pts, ad.car_pts) }}</span></div>{% endif %}
+              {% if ad.car_vin and current_user.is_admin %}<div class="param-item"><span class="param-label">VIN</span><span class="param-val">{{ ad.car_vin }}</span></div>{% endif %}
             </div>
           </div>
           {% endif %}

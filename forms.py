@@ -175,19 +175,44 @@ class DealForm(FlaskForm):
     floor = StringField('Этаж', validators=[Optional()])
     total_floors = StringField('Всего этажей', validators=[Optional()])
 
-    # Auto
+    # Auto — характеристики по образцу Авто.ру/Дром
     car_brand = StringField('Марка', validators=[Optional()])
     car_model = StringField('Модель', validators=[Optional()])
     car_year = StringField('Год', validators=[Optional()])
     car_power = StringField('Мощность (л.с.)', validators=[Optional()])
     car_mileage = StringField('Пробег (км)', validators=[Optional()])
+    car_engine_volume = StringField('Объём двигателя (л)', validators=[Optional()])
     car_transmission = SelectField('КПП', choices=[
-        ('', '—'), ('auto', 'Автомат'), ('manual', 'Механика')
+        ('', '—'), ('auto', 'Автомат'), ('manual', 'Механика'),
+        ('robot', 'Робот'), ('variator', 'Вариатор')
     ], validators=[Optional()])
     car_fuel = SelectField('Топливо', choices=[
         ('', '—'), ('petrol', 'Бензин'), ('diesel', 'Дизель'),
-        ('electric', 'Электро'), ('hybrid', 'Гибрид')
+        ('electric', 'Электро'), ('hybrid', 'Гибрид'), ('gas', 'Газ (LPG)')
     ], validators=[Optional()])
+    car_body = SelectField('Кузов', choices=[
+        ('', '—'), ('sedan', 'Седан'), ('hatchback', 'Хэтчбек'),
+        ('wagon', 'Универсал'), ('suv', 'Внедорожник'), ('coupe', 'Купе'),
+        ('minivan', 'Минивэн'), ('pickup', 'Пикап'), ('liftback', 'Лифтбек'),
+        ('cabrio', 'Кабриолет'), ('van', 'Фургон')
+    ], validators=[Optional()])
+    car_drive = SelectField('Привод', choices=[
+        ('', '—'), ('fwd', 'Передний'), ('rwd', 'Задний'), ('awd', 'Полный')
+    ], validators=[Optional()])
+    car_wheel = SelectField('Руль', choices=[
+        ('', '—'), ('left', 'Левый'), ('right', 'Правый')
+    ], validators=[Optional()])
+    car_owners = SelectField('Владельцев по ПТС', choices=[
+        ('', '—'), ('1', '1'), ('2', '2'), ('3', '3 и более')
+    ], validators=[Optional()])
+    car_condition = SelectField('Состояние', choices=[
+        ('', '—'), ('not_beaten', 'Не битый'), ('beaten', 'Битый')
+    ], validators=[Optional()])
+    car_pts = SelectField('ПТС', choices=[
+        ('', '—'), ('original', 'Оригинал'), ('duplicate', 'Дубликат')
+    ], validators=[Optional()])
+    car_color = StringField('Цвет', validators=[Optional(), Length(max=30)])
+    car_vin = StringField('VIN', validators=[Optional(), Length(max=20)])
 
 
 class ExistingDealForm(FlaskForm):

@@ -21,7 +21,7 @@ from datetime import date
 
 from sqlalchemy.exc import IntegrityError
 
-from models import db, User, BotFilter, BotNotification
+from models import db, User, BotFilter, BotNotification, CAR_LABELS
 from telegram_notify import CATEGORY_LABELS, RISK_LABELS, fmt_money, esc
 
 logger = logging.getLogger(__name__)
@@ -99,6 +99,26 @@ def _deal_link(app, deal):
     return f'\n🔗 {site}/deal/{deal.id}'
 
 
+def _car_summary_line(deal):
+    """Короткая строка об авто для сообщений бота: BMW X5, 2022, 45 000 км, автомат."""
+    if deal.category != 'auto':
+        return None
+    parts = []
+    name = ' '.join(p for p in (deal.car_brand, deal.car_model) if p)
+    if name:
+        parts.append(esc(name))
+    if deal.car_year:
+        parts.append(str(deal.car_year))
+    if deal.car_mileage:
+        parts.append(f'{fmt_money(deal.car_mileage)} км')
+    if deal.car_transmission:
+        parts.append(CAR_LABELS['transmission'].get(deal.car_transmission,
+                                                    deal.car_transmission).lower())
+    if deal.car_drive:
+        parts.append(f"привод {CAR_LABELS['drive'].get(deal.car_drive, deal.car_drive).lower()}")
+    return f'🚗 {", ".join(parts)}' if parts else None
+
+
 def format_deal_published(app, deal):
     cat = CATEGORY_LABELS.get(deal.category, deal.category)
     risk = RISK_LABELS.get(deal.risk_level, deal.risk_level)
@@ -108,6 +128,9 @@ def format_deal_published(app, deal):
         f'📋 <b>{esc(deal.title)}</b>',
         f'📁 {cat}',
     ]
+    car_line = _car_summary_line(deal)
+    if car_line:
+        lines.append(car_line)
     if not deal.is_urgent_sale and (deal.expected_profit_pct or 0) > 0:
         lines.append(f'📈 Доходность: <b>+{deal.expected_profit_pct}% годовых</b>')
     lines.append(f'⏱ Срок: {deal.term_display}')

@@ -152,12 +152,34 @@ def m_005_telegram_bot(c: sqlite3.Cursor) -> None:
     )
 
 
+def m_006_car_details(c: sqlite3.Cursor) -> None:
+    """Расширенные характеристики авто (по образцу Авто.ру/Дром): кузов, объём,
+    привод, руль, владельцы, состояние, ПТС, цвет, VIN."""
+    if not table_exists(c, 'deals'):
+        return
+    columns = [
+        ('car_body', 'VARCHAR(30)'),
+        ('car_engine_volume', 'FLOAT'),
+        ('car_drive', 'VARCHAR(10)'),
+        ('car_wheel', 'VARCHAR(10)'),
+        ('car_owners', 'INTEGER'),
+        ('car_condition', 'VARCHAR(20)'),
+        ('car_pts', 'VARCHAR(12)'),
+        ('car_color', 'VARCHAR(30)'),
+        ('car_vin', 'VARCHAR(20)'),
+    ]
+    for name, ddl_type in columns:
+        if not col_exists(c, 'deals', name):
+            c.execute(f"ALTER TABLE deals ADD COLUMN {name} {ddl_type}")
+
+
 MIGRATIONS = [
     ('001_investment_dates', m_001_investment_dates),
     ('002_deal_date_start',  m_002_deal_date_start),
     ('003_investment_manual_profit', m_003_investment_manual_profit),
     ('004_deal_market_value', m_004_deal_market_value),
     ('005_telegram_bot', m_005_telegram_bot),
+    ('006_car_details', m_006_car_details),
 ]
 
 

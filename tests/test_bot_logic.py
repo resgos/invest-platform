@@ -410,5 +410,31 @@ class DeliveryRecheckTests(BotTestCase):
         self.assertTrue(_deal_event_still_relevant(n, u))
 
 
+class CarSummaryTests(BotTestCase):
+    def test_car_line_in_published_message(self):
+        mk_user('u1', tg=111)
+        d = mk_deal(title='Залог: BMW X5', category='auto', visibility='all')
+        d.car_brand = 'BMW'
+        d.car_model = 'X5'
+        d.car_year = 2022
+        d.car_mileage = 45_000
+        d.car_transmission = 'auto'
+        d.car_drive = 'awd'
+        db.session.commit()
+        emit_deal_published(self.app, d)
+        msg = BotNotification.query.first().message
+        self.assertIn('🚗 BMW X5, 2022, 45 000 км, автомат, привод полный', msg)
+
+    def test_no_car_line_for_other_categories(self):
+        d = mk_deal(category='realestate')
+        self.assertIsNone(bot_events._car_summary_line(d))
+
+    def test_partial_car_data(self):
+        d = mk_deal(category='auto')
+        d.car_brand = 'Lada'
+        line = bot_events._car_summary_line(d)
+        self.assertEqual(line, '🚗 Lada')
+
+
 if __name__ == '__main__':
     unittest.main()

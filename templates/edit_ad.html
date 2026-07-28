@@ -124,13 +124,22 @@
         <div id="auto-fields" style="display:none">
           <h5 style="color:#fff" class="mb-3"><i class="fas fa-car me-2"></i>Автомобиль</h5>
           <div class="row g-3 mb-4">
-            <div class="col-md-4">{{ form.car_brand(class="form-control", placeholder="Марка") }}</div>
-            <div class="col-md-4">{{ form.car_model(class="form-control", placeholder="Модель") }}</div>
-            <div class="col-md-4">{{ form.car_year(class="form-control", placeholder="Год") }}</div>
-            <div class="col-md-4">{{ form.car_power(class="form-control", placeholder="л.с.") }}</div>
-            <div class="col-md-4">{{ form.car_mileage(class="form-control", placeholder="км") }}</div>
-            <div class="col-md-4">{{ form.car_transmission(class="form-select") }}</div>
-            <div class="col-md-4">{{ form.car_fuel(class="form-select") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_brand.label.text }}</label>{{ form.car_brand(class="form-control", placeholder="Марка") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_model.label.text }}</label>{{ form.car_model(class="form-control", placeholder="Модель") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_year.label.text }}</label>{{ form.car_year(class="form-control", placeholder="Год") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_body.label.text }}</label>{{ form.car_body(class="form-select") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_mileage.label.text }}</label>{{ form.car_mileage(class="form-control", placeholder="км") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_color.label.text }}</label>{{ form.car_color(class="form-control", placeholder="Цвет") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_engine_volume.label.text }}</label>{{ form.car_engine_volume(class="form-control", placeholder="2.0") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_power.label.text }}</label>{{ form.car_power(class="form-control", placeholder="л.с.") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_fuel.label.text }}</label>{{ form.car_fuel(class="form-select") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_transmission.label.text }}</label>{{ form.car_transmission(class="form-select") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_drive.label.text }}</label>{{ form.car_drive(class="form-select") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_wheel.label.text }}</label>{{ form.car_wheel(class="form-select") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_owners.label.text }}</label>{{ form.car_owners(class="form-select") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_condition.label.text }}</label>{{ form.car_condition(class="form-select") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_pts.label.text }}</label>{{ form.car_pts(class="form-select") }}</div>
+            <div class="col-md-4"><label class="form-label">{{ form.car_vin.label.text }}</label>{{ form.car_vin(class="form-control", placeholder="VIN") }}</div>
           </div>
         </div>
 

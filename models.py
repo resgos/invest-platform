@@ -22,6 +22,25 @@ def _sqlite_pragmas(dbapi_conn, _record):
     cur.close()
 
 
+# Человекочитаемые подписи автомобильных характеристик — единый словарь
+# для шаблонов (детальная страница, каталог) и телеграм-сообщений
+CAR_LABELS = {
+    'transmission': {'manual': 'Механика', 'auto': 'Автомат',
+                     'robot': 'Робот', 'variator': 'Вариатор'},
+    'fuel': {'petrol': 'Бензин', 'diesel': 'Дизель', 'hybrid': 'Гибрид',
+             'electric': 'Электро', 'gas': 'Газ (LPG)'},
+    'body': {'sedan': 'Седан', 'hatchback': 'Хэтчбек', 'wagon': 'Универсал',
+             'suv': 'Внедорожник', 'coupe': 'Купе', 'minivan': 'Минивэн',
+             'pickup': 'Пикап', 'liftback': 'Лифтбек', 'cabrio': 'Кабриолет',
+             'van': 'Фургон'},
+    'drive': {'fwd': 'Передний', 'rwd': 'Задний', 'awd': 'Полный'},
+    'wheel': {'left': 'Левый', 'right': 'Правый'},
+    'condition': {'not_beaten': 'Не битый', 'beaten': 'Битый'},
+    'pts': {'original': 'Оригинал', 'duplicate': 'Дубликат'},
+    'owners': {1: '1 владелец', 2: '2 владельца', 3: '3 и более'},
+}
+
+
 # Many-to-many: which investors can see which deals
 deal_visibility = db.Table(
     'deal_visibility',
@@ -111,14 +130,23 @@ class Deal(db.Model):
     floor = db.Column(db.Integer)
     total_floors = db.Column(db.Integer)
 
-    # Auto fields
+    # Auto fields (набор характеристик по образцу Авто.ру/Дром)
     car_brand = db.Column(db.String(50))
     car_model = db.Column(db.String(50))
     car_year = db.Column(db.Integer)
-    car_power = db.Column(db.Integer)
-    car_mileage = db.Column(db.Integer)
-    car_transmission = db.Column(db.String(30))
-    car_fuel = db.Column(db.String(30))
+    car_power = db.Column(db.Integer)          # л.с.
+    car_mileage = db.Column(db.Integer)        # км
+    car_transmission = db.Column(db.String(30))  # manual|auto|robot|variator
+    car_fuel = db.Column(db.String(30))          # petrol|diesel|hybrid|electric|gas
+    car_body = db.Column(db.String(30))          # sedan|hatchback|wagon|suv|coupe|minivan|pickup|liftback|cabrio|van
+    car_engine_volume = db.Column(db.Float)      # л
+    car_drive = db.Column(db.String(10))         # fwd|rwd|awd
+    car_wheel = db.Column(db.String(10))         # left|right
+    car_owners = db.Column(db.Integer)           # владельцев по ПТС: 1|2|3 (3 = «3 и более»)
+    car_condition = db.Column(db.String(20))     # not_beaten|beaten
+    car_pts = db.Column(db.String(12))           # original|duplicate
+    car_color = db.Column(db.String(30))
+    car_vin = db.Column(db.String(20))
 
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))

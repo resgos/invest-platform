@@ -16,7 +16,7 @@ from werkzeug.utils import secure_filename
 
 from config import Config
 from models import (db, User, Deal, Investment, Transaction, AuditLog,
-                    BotNotification, deal_visibility)
+                    BotNotification, deal_visibility, CAR_LABELS)
 from forms import (LoginForm, CreateUserForm, EditUserForm, DealForm,
                    ExistingDealForm, ChangePasswordForm)
 from telegram_notify import notify_investment, notify_investment_status, test_connection as tg_test_connection
@@ -214,6 +214,9 @@ def create_app():
     # ──── Create upload dir ────
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
+    # Подписи авто-характеристик доступны во всех шаблонах
+    app.jinja_env.globals['CAR_LABELS'] = CAR_LABELS
+
     # ──── DB init ────
     # Под gunicorn 3 воркера форкаются параллельно и каждый выполняет этот блок —
     # без try/except это даёт UNIQUE-конфликт по email/username при первом запуске.
@@ -363,6 +366,19 @@ def create_app():
         tab = request.args.get('tab', 'active')  # active, closed, all
         date_from = request.args.get('date_from', '')
         date_to = request.args.get('date_to', '')
+        # Ценовой диапазон (все категории) + авто-фильтры по образцу Авто.ру/Дром
+        price_from = request.args.get('price_from', '')
+        price_to = request.args.get('price_to', '')
+        car_filters = {
+            'brand': request.args.get('car_brand', ''),
+            'year_from': request.args.get('car_year_from', ''),
+            'year_to': request.args.get('car_year_to', ''),
+            'mileage_to': request.args.get('car_mileage_to', ''),
+            'transmission': request.args.get('car_transmission', ''),
+            'fuel': request.args.get('car_fuel', ''),
+            'drive': request.args.get('car_drive', ''),
+            'body': request.args.get('car_body', ''),
+        }
 
         if current_user.is_admin:
             q = Deal.query
@@ -411,6 +427,31 @@ def create_app():
         if risk != 'all':
             q = q.filter_by(risk_level=risk)
 
+        # Цена (сумма займа) — базовый фильтр любой площадки
+        if price_from and safe_float(price_from) > 0:
+            q = q.filter(Deal.price >= safe_float(price_from))
+        if price_to and safe_float(price_to) > 0:
+            q = q.filter(Deal.price <= safe_float(price_to))
+
+        # Авто-фильтры применяются только в категории «Автомобили»
+        if cat == 'auto':
+            if car_filters['brand']:
+                q = q.filter(Deal.car_brand == car_filters['brand'])
+            if car_filters['year_from'] and safe_int(car_filters['year_from']) > 0:
+                q = q.filter(Deal.car_year >= safe_int(car_filters['year_from']))
+            if car_filters['year_to'] and safe_int(car_filters['year_to']) > 0:
+                q = q.filter(Deal.car_year <= safe_int(car_filters['year_to']))
+            if car_filters['mileage_to'] and safe_int(car_filters['mileage_to']) > 0:
+                q = q.filter(Deal.car_mileage <= safe_int(car_filters['mileage_to']))
+            if car_filters['transmission']:
+                q = q.filter(Deal.car_transmission == car_filters['transmission'])
+            if car_filters['fuel']:
+                q = q.filter(Deal.car_fuel == car_filters['fuel'])
+            if car_filters['drive']:
+                q = q.filter(Deal.car_drive == car_filters['drive'])
+            if car_filters['body']:
+                q = q.filter(Deal.car_body == car_filters['body'])
+
         if sort == 'profit_desc':
             q = q.order_by(Deal.expected_profit_pct.desc())
         elif sort == 'price_asc':
@@ -457,8 +498,15 @@ def create_app():
         ).count()
         all_count = base_q.count()
 
+        # Марки для выпадашки авто-фильтра — то, что реально есть в базе
+        car_brands = [b[0] for b in db.session.query(Deal.car_brand)
+                      .filter(Deal.category == 'auto', Deal.car_brand.isnot(None))
+                      .distinct().order_by(Deal.car_brand).all()]
+
         return render_template('catalog.html', ads=deals, category=cat, risk=risk, sort=sort,
                                tab=tab, date_from=date_from, date_to=date_to,
+                               price_from=price_from, price_to=price_to,
+                               car_filters=car_filters, car_brands=car_brands,
                                active_count=active_count, hot_count=hot_count,
                                closed_count=closed_count, all_count=all_count)
 
@@ -929,13 +977,22 @@ def create_app():
                 location=form.location.data or None,
                 floor=safe_int(form.floor.data) if form.floor.data else None,
                 total_floors=safe_int(form.total_floors.data) if form.total_floors.data else None,
-                car_brand=form.car_brand.data or None,
-                car_model=form.car_model.data or None,
+                car_brand=form.car_brand.data.strip() if form.car_brand.data else None,
+                car_model=form.car_model.data.strip() if form.car_model.data else None,
                 car_year=safe_int(form.car_year.data) if form.car_year.data else None,
                 car_power=safe_int(form.car_power.data) if form.car_power.data else None,
                 car_mileage=safe_int(form.car_mileage.data) if form.car_mileage.data else None,
+                car_engine_volume=safe_float(form.car_engine_volume.data) if form.car_engine_volume.data else None,
                 car_transmission=form.car_transmission.data or None,
                 car_fuel=form.car_fuel.data or None,
+                car_body=form.car_body.data or None,
+                car_drive=form.car_drive.data or None,
+                car_wheel=form.car_wheel.data or None,
+                car_owners=safe_int(form.car_owners.data) if form.car_owners.data else None,
+                car_condition=form.car_condition.data or None,
+                car_pts=form.car_pts.data or None,
+                car_color=form.car_color.data.strip() if form.car_color.data else None,
+                car_vin=form.car_vin.data.strip().upper() if form.car_vin.data else None,
                 created_by=current_user.id,
                 status='active'
             )
@@ -995,13 +1052,22 @@ def create_app():
             deal.location = form.location.data or None
             deal.floor = safe_int(form.floor.data) if form.floor.data else None
             deal.total_floors = safe_int(form.total_floors.data) if form.total_floors.data else None
-            deal.car_brand = form.car_brand.data or None
-            deal.car_model = form.car_model.data or None
+            deal.car_brand = form.car_brand.data.strip() if form.car_brand.data else None
+            deal.car_model = form.car_model.data.strip() if form.car_model.data else None
             deal.car_year = safe_int(form.car_year.data) if form.car_year.data else None
             deal.car_power = safe_int(form.car_power.data) if form.car_power.data else None
             deal.car_mileage = safe_int(form.car_mileage.data) if form.car_mileage.data else None
+            deal.car_engine_volume = safe_float(form.car_engine_volume.data) if form.car_engine_volume.data else None
             deal.car_transmission = form.car_transmission.data or None
             deal.car_fuel = form.car_fuel.data or None
+            deal.car_body = form.car_body.data or None
+            deal.car_drive = form.car_drive.data or None
+            deal.car_wheel = form.car_wheel.data or None
+            deal.car_owners = safe_int(form.car_owners.data) if form.car_owners.data else None
+            deal.car_condition = form.car_condition.data or None
+            deal.car_pts = form.car_pts.data or None
+            deal.car_color = form.car_color.data.strip() if form.car_color.data else None
+            deal.car_vin = form.car_vin.data.strip().upper() if form.car_vin.data else None
 
             # Handle image deletion
             delete_imgs = request.form.getlist('delete_images')
