@@ -34,7 +34,11 @@ if [[ ! -d "$APP_DIR/.git" ]]; then
     exit 1
 fi
 
-if ! systemctl list-unit-files | grep -q "^${SERVICE_FILE}"; then
+# Проверяем наличие юнита через systemctl cat, а НЕ через `list-unit-files | grep -q`:
+# под `set -o pipefail` grep -q закрывает пайп на первом совпадении, systemctl
+# получает SIGPIPE, весь конвейер считается упавшим — и скрипт ложно сообщал
+# «сервис не найден» на машине, где юнит есть и работает.
+if ! systemctl cat "${SERVICE_FILE}" >/dev/null 2>&1; then
     err "systemd-сервис ${SERVICE_FILE} не найден."
     err "Передайте корректное имя через SERVICE_NAME=<имя> bash $0"
     exit 1
