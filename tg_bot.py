@@ -7,8 +7,10 @@
 
   1. Доставляет сохранённые события из outbox (bot_notifications) в личку —
      новые сделки по фильтрам пользователя, скорый старт, статусы заявок.
-     Перед отправкой deal-события видимость перепроверяется: если админ успел
-     сузить доступ или поставить сделку на паузу, строка отменяется.
+     Перед отправкой deal-события перепроверяются: если админ успел сузить
+     доступ, поставить сделку на паузу или сделка уже фактически стартовала —
+     строка отменяется (не доставляется), но не теряется навсегда: следующая
+     эмиссия того же события реанимирует её обратно в pending.
   2. Отвечает на команды: /deals /feed /filters /myid /help.
 
 Транспорт — чистый urllib с той же прокси-логикой, что и telegram_notify
@@ -37,6 +39,7 @@ from datetime import date, datetime, timezone, timedelta
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from bot_events import EVENT_DEAL_PUBLISHED, EVENT_DEAL_STARTING
 from models import db, User, Deal, BotFilter, BotNotification
 from telegram_notify import _get_proxy_opener, CATEGORY_LABELS, RISK_LABELS, fmt_money, esc
 
@@ -64,9 +67,13 @@ CAT_SHORT = {
     'other': '📦 Другое',
 }
 
-TRANSIENT_MAX_ATTEMPTS = 100  # сетевые сбои ретраятся долго; permanent — сразу failed
+TRANSIENT_MAX_ATTEMPTS = 100  # net_error (сеть/5xx) ретраится долго; permanent — сразу failed
+ROW_ERROR_MAX_ATTEMPTS = 5    # row_error (проблема конкретной строки, не сеть) — ретраим недолго
 OUTBOX_BATCH = 50             # уведомлений за один проход диспетчера
 SEND_PACING_SEC = 0.05        # пауза между sendMessage (лимит Telegram ~30 msg/s)
+
+FEED_TEXT_BUDGET = 3900       # лимит Telegram 4096 с запасом под текст /feed целиком
+FEED_BLOCK_MAX_CHARS = 900    # обрезка одного аномально длинного блока ленты (см. cmd_feed)
 
 
 # ──────────────────── Telegram API (urllib + прокси) ────────────────────
@@ -127,7 +134,22 @@ class TelegramAPI:
         }, timeout=poll_timeout + 15)
 
     def send_message(self, chat_id, text, reply_markup=None):
-        """Возвращает (status, retry_after): 'ok' | 'flood' | 'permanent' | 'transient'."""
+        """Возвращает (status, retry_after).
+
+        status — одно из:
+          'ok'        — доставлено;
+          'flood'     — 429, ждать retry_after, попытку не считать;
+          'permanent' — 400/401/403/404: неисправимая ошибка запроса/токена
+                        (бан бота, чат не найден, битая разметка, ОТОЗВАННЫЙ
+                        ТОКЕН) — ретрай бессмыслен, сразу failed;
+          'row_error' — прочие ошибки API уровня КОНКРЕТНОЙ строки (иной 4xx,
+                        либо ok:false в теле 200-ответа — см. call()) — не
+                        транспортная проблема, остальным адресатам в батче
+                        это не мешает;
+          'net_error' — транспортная проблема (сеть недоступна/таймаут/5xx
+                        Telegram) — не специфична для строки, есть смысл
+                        прервать батч и подождать следующего прохода.
+        """
         payload = {
             'chat_id': chat_id,
             'text': text,
@@ -143,15 +165,21 @@ class TelegramAPI:
             if e.status == 429:
                 logger.warning(f'sendMessage → {chat_id}: flood limit, retry_after={e.retry_after}')
                 return 'flood', e.retry_after
-            if e.status in (400, 403, 404):
-                # blocked by user / chat not found / can't parse entities — ретрай бессмыслен
+            if e.status in (400, 401, 403, 404):
+                # заблокировал бота / чат не найден / не смогли распарсить
+                # разметку / ТОКЕН ОТОЗВАН (401) — ретрай бессмыслен
                 logger.error(f'sendMessage → {chat_id}: перманентная ошибка {e}')
                 return 'permanent', None
-            logger.error(f'sendMessage → {chat_id}: {e}')
-            return 'transient', None
+            if e.status >= 500:
+                # Telegram лежит — проблема транспорта, а не этого адресата
+                logger.error(f'sendMessage → {chat_id}: сервер Telegram — {e}')
+                return 'net_error', None
+            # прочие 4xx и ok:false в 200-ответе — ошибка ИМЕННО этой строки
+            logger.error(f'sendMessage → {chat_id}: ошибка по строке — {e}')
+            return 'row_error', None
         except (URLError, OSError, ValueError) as e:
             logger.error(f'sendMessage → {chat_id}: сеть — {e}')
-            return 'transient', None
+            return 'net_error', None
 
     def edit_message(self, chat_id, message_id, text, reply_markup=None):
         payload = {
@@ -322,6 +350,24 @@ def cmd_deals(app, user: User) -> str:
     return '\n'.join(lines)
 
 
+def _truncate_block(block: str, limit: int) -> str:
+    """Обрезает один аномально длинный блок ленты до ~limit символов.
+
+    Режем по границе строки (rfind('\\n')), а не посимвольно: в блоке только
+    парные HTML-теги вида <b>...</b>, целиком лежащие в одной строке, поэтому
+    отбрасывание ЦЕЛЫХ хвостовых строк не может оставить незакрытый тег.
+    Если переноса строки в пределах limit нет (например поле notes — сплошной
+    текст без \\n длиннее самого лимита), это крайний случай: режем жёстко по
+    символам — тег порвать всё равно нечем, notes всегда чистый текст (esc()
+    экранирует, но не добавляет теги)."""
+    if len(block) <= limit:
+        return block
+    cut = block.rfind('\n', 0, limit)
+    if cut <= 0:
+        cut = limit
+    return block[:cut].rstrip() + '\n…'
+
+
 def cmd_feed(app, user: User) -> str:
     notifs = (BotNotification.query.filter_by(user_id=user.id)
               .filter(BotNotification.status != 'cancelled')
@@ -337,12 +383,19 @@ def cmd_feed(app, user: User) -> str:
         if n.created_at:
             when = n.created_at.replace(tzinfo=timezone.utc).astimezone(MSK).strftime('%d.%m %H:%M')
         blocks.append(f'━━ {when} ━━\n{n.message}')
-    # Лимит Telegram 4096: набираем ЦЕЛЫЕ блоки, пока влезает
+    # Лимит Telegram 4096: набираем блоки, пока влезает. Аномально длинный
+    # ОДИНОЧНЫЙ блок (например отклонение заявки с длинным notes — поле без
+    # ограничения длины) режем по символам вместо того, чтобы прервать сбор:
+    # раньше, если такой блок оказывался ПЕРВЫМ (самым свежим), лента
+    # прерывалась сразу на нём и показывала заголовок без единого события.
     parts = [header]
     size = len(header)
     truncated = False
     for b in blocks:
-        if size + len(b) + 2 > 3900:
+        if len(b) > FEED_BLOCK_MAX_CHARS:
+            b = _truncate_block(b, FEED_BLOCK_MAX_CHARS)
+            truncated = True
+        if size + len(b) + 2 > FEED_TEXT_BUDGET:
             truncated = True
             break
         parts.append(b)
@@ -491,12 +544,25 @@ def apply_filter_callback(bf: BotFilter, action: str, value: str) -> tuple[bool,
 
 def _deal_event_still_relevant(n: BotNotification, user: User) -> bool:
     """Перепроверка deal-события на момент ДОСТАВКИ: сделка всё ещё активна
-    и видима адресату. Иначе (админ сузил видимость / поставил паузу, пока
-    строка ждала в очереди) — событие отменяется, а не доставляется."""
+    (или, для «скоро старт»/«опубликована», всё ещё ПРИНИМАЕТ заявки) и видима
+    адресату. Иначе (админ сузил видимость / поставил паузу, пока строка ждала
+    в очереди) — событие отменяется, а не доставляется.
+
+    Для deal_published и deal_starting_* (текст обещает «успейте подать заявку
+    до старта») голой проверки status=='active' недостаточно: сделка остаётся
+    active И ПОСЛЕ фактического старта (date_start наступил), а бот, полежавший
+    в очереди через эту границу, прислал бы «успевайте» по уже стартовавшей
+    сделке — и роут invest её всё равно отверг бы. Используем то же бизнес-
+    правило, что и сам приём заявок — deal.accepts_investors()."""
     if n.investment_id is not None or n.deal_id is None:
         return True  # персональные события всегда актуальны
     deal = db.session.get(Deal, n.deal_id)
-    if not deal or deal.status != 'active':
+    if not deal:
+        return False
+    if n.event_type == EVENT_DEAL_PUBLISHED or n.event_type.startswith(EVENT_DEAL_STARTING):
+        if not deal.accepts_investors(date.today()):
+            return False
+    elif deal.status != 'active':
         return False
     return deal.user_can_see(user)
 
@@ -504,9 +570,19 @@ def _deal_event_still_relevant(n: BotNotification, user: User) -> bool:
 def dispatch_outbox(api: TelegramAPI, app) -> tuple[int, int]:
     """Доставляет pending-уведомления. Возвращает (отправлено, ошибок).
 
-    Классификация сбоев: permanent (400/403/404) — сразу failed; flood (429) —
-    ждём retry_after и НЕ сжигаем попытку; transient (сеть/5xx) — остаёмся
-    pending и прерываем батч (сеть лежит — нет смысла молотить остальных)."""
+    Классификация сбоев (см. TelegramAPI.send_message):
+      permanent (400/401/403/404) — неисправимая ошибка запроса/токена
+        (в т.ч. отозванный токен) — сразу failed, идём дальше;
+      flood (429) — ждём retry_after и НЕ сжигаем попытку, следующий проход
+        дособерёт остаток батча;
+      row_error — ошибка API по КОНКРЕТНОЙ строке (не сеть) — инкремент
+        attempts, failed при исчерпании ROW_ERROR_MAX_ATTEMPTS, ИДЁМ ДАЛЬШЕ:
+        одна битая строка не должна блокировать доставку остальным (было:
+        любая не-4xx-ошибка ретраилась ×100 попыток с break батча — head-of-
+        line blocking всей очереди на строке одного адресата);
+      net_error (сеть недоступна/таймаут/5xx Telegram) — не специфична для
+        строки, остаёмся pending и прерываем батч (сеть лежит — нет смысла
+        молотить остальных)."""
     sent = failed = 0
     with app.app_context():
         pending = (BotNotification.query
@@ -545,7 +621,15 @@ def dispatch_outbox(api: TelegramAPI, app) -> tuple[int, int]:
                 logger.info(f'outbox: flood-пауза {wait}с, остаток батча — следующим проходом')
                 time.sleep(wait)
                 break
-            else:  # transient
+            elif status == 'row_error':
+                # Проблема этой строки, не сети — остальным адресатам не мешает
+                n.attempts += 1
+                if n.attempts >= ROW_ERROR_MAX_ATTEMPTS:
+                    n.status = 'failed'
+                    failed += 1
+                db.session.commit()
+                # НЕ break: переходим к следующей строке батча
+            else:  # net_error
                 n.attempts += 1
                 if n.attempts >= TRANSIENT_MAX_ATTEMPTS:
                     n.status = 'failed'

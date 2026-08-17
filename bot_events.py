@@ -13,8 +13,11 @@
 сохраняются без фильтров — это события самого пользователя.
 
 Дедуп deal-событий: одна строка на (user, deal, event_type). Повторная эмиссия
-обновляет текст ещё не доставленных строк и реанимирует failed (например, после
-исправления опечатки в telegram_id); уже доставленные повторно не шлются.
+обновляет текст ещё не доставленных строк и реанимирует failed/cancelled
+(например, после исправления опечатки в telegram_id, возврата сделки из паузы
+или расширения видимости обратно — cancelled НЕ вечная могила, иначе строка,
+отменённая диспетчером ровно перед откатом админом, не доехала бы до
+пользователя никогда); уже доставленные повторно не шлются.
 """
 import logging
 from datetime import date
@@ -198,7 +201,11 @@ def _upsert_deal_notification(user_id, event_type, message, deal_id):
 
     Существующая строка: sent → не трогаем (не спамим повторно);
     pending → обновляем текст (правки сделки доезжают до недоставленных);
-    failed → реанимируем в pending (например, админ исправил telegram_id).
+    failed/cancelled → реанимируем в pending (failed — например, админ исправил
+    telegram_id; cancelled — диспетчер отменил строку, т.к. сделка на момент
+    доставки была на паузе/скрыта, а потом админ вернул всё как было — без
+    реанимации такая строка была бы вечной могилой: уникальный индекс не даст
+    вставить новую, а cancelled никогда не переотправляется).
     """
     existing = BotNotification.query.filter_by(
         user_id=user_id, deal_id=deal_id, event_type=event_type,
@@ -207,7 +214,7 @@ def _upsert_deal_notification(user_id, event_type, message, deal_id):
     if existing:
         if existing.status == 'pending':
             existing.message = message
-        elif existing.status == 'failed':
+        elif existing.status in ('failed', 'cancelled'):
             existing.status = 'pending'
             existing.attempts = 0
             existing.message = message

@@ -1,6 +1,13 @@
 [Unit]
 Description=Gruppa Titan Telegram bot (tg_bot.py)
 After=network.target
+# StartLimitIntervalSec/StartLimitBurst — директивы секции [Unit] (systemd >=230),
+# а не [Service]: там systemd их не распознаёт (warning "Unknown key name
+# ... in section 'Service'") и молча игнорирует, из-за чего лимит рестартов не
+# работал вовсе — бот с битым токеном/прокси (Restart=on-failure) крутил
+# вечный цикл рестартов каждые 10с вместо остановки после 10 попыток за 5 минут.
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -14,8 +21,6 @@ ExecStart=/home/deploy/gruppa-titan/venv/bin/python tg_bot.py
 # останавливается, а не крутит вечный рестарт-цикл каждые 10 секунд
 Restart=on-failure
 RestartSec=10
-StartLimitIntervalSec=300
-StartLimitBurst=10
 StandardOutput=journal
 StandardError=journal
 

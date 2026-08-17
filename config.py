@@ -48,8 +48,18 @@ def _persistent_secret_key():
 
     Случайный ключ в памяти ломает сессии при рестарте и между gunicorn-воркерами
     (каждый форк получил бы свой ключ) — поэтому недостающий ключ сохраняем в файл.
-    Пустой файл (краш между созданием и записью) считается отсутствующим — иначе
-    все последующие старты молча получали бы SECRET_KEY='' и сайт лежал бы 500-ми.
+
+    Публикация нового ключа — атомарная: содержимое сначала полностью пишется
+    (+fsync) во временный файл в ТОМ ЖЕ каталоге, и только потом «публикуется»
+    под именем secret_key через os.link (атомарная семантика «только если ещё
+    не существует» — FileExistsError, если нас опередил другой процесс/воркер).
+    Поэтому имя secret_key снаружи никогда не наблюдается пустым: либо файла ещё
+    нет, либо в нём сразу лежит целый ключ. Раньше между os.open(O_CREAT) и
+    записью было окно, в которое параллельный воркер мог увидеть файл пустым,
+    удалить его (remove работает и при чужом открытом fd) и создать свой —
+    воркеры расходились по SECRET_KEY. Ветка удаления пустого файла ниже
+    остаётся только как fallback для файлов-сирот от старых версий/чужого краша
+    (сама «пустота» больше не создаётся этим кодом).
     """
     key = os.getenv('SECRET_KEY')
     if key:
@@ -63,35 +73,69 @@ def _persistent_secret_key():
         except OSError:
             return ''
 
-    try:
-        stored = _read_key()
-        if stored:
-            return stored
-        if os.path.exists(key_file):
-            # Файл есть, но пуст — осиротевший после краша, убираем и пересоздаём
-            try:
+    stored = _read_key()
+    if stored:
+        return stored
+
+    # Легаси-фоллбек: файл есть, но пуст (сирота от краша до этого фикса).
+    # Перепроверяем размер прямо перед удалением — сужает окно гонки, но не
+    # закрывает его целиком (TOCTOU), поэтому это запасной путь, а не основная
+    # защита — основная защита ниже, публикация файла атомарна и никогда не
+    # создаёт наблюдаемое пустое состояние.
+    if os.path.exists(key_file):
+        try:
+            if os.stat(key_file).st_size == 0:
                 os.remove(key_file)
-            except OSError:
-                pass
-        new_key = os.urandom(64).hex()
-        fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except OSError:
+            pass
+
+    new_key = os.urandom(64).hex()
+    tmp_path = os.path.join(_INSTANCE_DIR, f'.secret_key.tmp-{os.getpid()}-{new_key[:16]}')
+    published = False
+    try:
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(new_key)
             f.flush()
             os.fsync(f.fileno())
-        return new_key
-    except FileExistsError:
-        # Параллельный воркер успел первым — ждём, пока он допишет ключ
-        for _ in range(20):
-            stored = _read_key()
-            if stored:
-                return stored
-            time.sleep(0.05)
-        # Писатель так и не дописал — генерим свой (хуже, чем общий, но не '')
-        return os.urandom(64).hex()
+        try:
+            # Атомарно публикуем ТОЛЬКО если нас не опередили
+            os.link(tmp_path, key_file)
+            published = True
+        except FileExistsError:
+            pass  # кто-то создал key_file первым — прочитаем его ниже
+        except OSError:
+            # ФС не поддерживает hardlink (cross-device, некоторые сетевые ФС) —
+            # атомарная публикация без анти-гонки "только если не существует",
+            # но всё ещё без промежуточного пустого состояния
+            os.replace(tmp_path, key_file)
+            published = True
     except OSError:
-        # ФС недоступна на запись — деградируем на случайный ключ (dev-режим)
-        return os.urandom(64).hex()
+        # ФС недоступна на запись вовсе — деградируем на случайный ключ (dev-режим)
+        return new_key
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    if published:
+        return new_key
+
+    # Нас опередили (os.link → FileExistsError) — ждём, пока чужой ключ станет
+    # виден. Окно увеличено с 1с (20×0.05) до 5с (100×0.05): на медленном VPS
+    # секунды не хватало и воркер молча генерил собственный ключ.
+    for _ in range(100):
+        stored = _read_key()
+        if stored:
+            return stored
+        time.sleep(0.05)
+
+    import logging
+    logging.getLogger(__name__).warning(
+        'secret_key: не дождались записи параллельным процессом за 5с — '
+        'генерирую собственный ключ (возможен разъезд SECRET_KEY между воркерами)')
+    return new_key
 
 
 class Config:

@@ -187,6 +187,21 @@ def create_app():
         except (ValueError, TypeError):
             return default
 
+    def parse_int_filter(raw):
+        """Целочисленный query-фильтр каталога ('100 000', '100\\xa0000').
+
+        В отличие от safe_int (default=0 неотличим от валидного нуля), эта
+        функция возвращает None для пустого/нераспознанного ввода — вызывающий
+        код сам решает, применять ли фильтр (и можно отличить "поле пустое"
+        от "введено 0"). Терпимость к пробелам-разрядам и NBSP — через
+        safe_float, чтобы не дублировать её логику разбора формата.
+        """
+        s = str(raw or '').strip()
+        if not s:
+            return None
+        val = safe_float(s, default=None)
+        return int(val) if val is not None else None
+
     def effective_start_date(deal, fallback):
         """Реальная дата начала инвестиции: фиксированный старт сделки (если задан и в будущем),
         иначе — fallback (обычно сегодня)."""
@@ -433,16 +448,23 @@ def create_app():
         if price_to and safe_float(price_to) > 0:
             q = q.filter(Deal.price <= safe_float(price_to))
 
-        # Авто-фильтры применяются только в категории «Автомобили»
+        # Авто-фильтры применяются только в категории «Автомобили».
+        # parse_int_filter (не safe_int!) — поле «100 000» с пробелом-разрядом
+        # не должно молча превращаться в default=0 и выпадать из фильтра.
         if cat == 'auto':
             if car_filters['brand']:
                 q = q.filter(Deal.car_brand == car_filters['brand'])
-            if car_filters['year_from'] and safe_int(car_filters['year_from']) > 0:
-                q = q.filter(Deal.car_year >= safe_int(car_filters['year_from']))
-            if car_filters['year_to'] and safe_int(car_filters['year_to']) > 0:
-                q = q.filter(Deal.car_year <= safe_int(car_filters['year_to']))
-            if car_filters['mileage_to'] and safe_int(car_filters['mileage_to']) > 0:
-                q = q.filter(Deal.car_mileage <= safe_int(car_filters['mileage_to']))
+            year_from = parse_int_filter(car_filters['year_from'])
+            if year_from is not None and year_from > 0:
+                q = q.filter(Deal.car_year >= year_from)
+            year_to = parse_int_filter(car_filters['year_to'])
+            if year_to is not None and year_to > 0:
+                q = q.filter(Deal.car_year <= year_to)
+            mileage_to = parse_int_filter(car_filters['mileage_to'])
+            # >= 0 (не > 0): «Пробег до 0» — валидный поиск новых авто,
+            # отрицательные по-прежнему тихо игнорируются
+            if mileage_to is not None and mileage_to >= 0:
+                q = q.filter(Deal.car_mileage <= mileage_to)
             if car_filters['transmission']:
                 q = q.filter(Deal.car_transmission == car_filters['transmission'])
             if car_filters['fuel']:
@@ -498,10 +520,15 @@ def create_app():
         ).count()
         all_count = base_q.count()
 
-        # Марки для выпадашки авто-фильтра — то, что реально есть в базе
-        car_brands = [b[0] for b in db.session.query(Deal.car_brand)
-                      .filter(Deal.category == 'auto', Deal.car_brand.isnot(None))
-                      .distinct().order_by(Deal.car_brand).all()]
+        # Марки для выпадашки авто-фильтра — то, что реально есть в базе,
+        # но только среди сделок, видимых текущему пользователю: иначе марка
+        # чужой скрытой сделки палит инвестору сам факт её существования
+        # (утечка метаданных закрытой платформы)
+        car_brands_q = db.session.query(Deal.car_brand).filter(
+            Deal.category == 'auto', Deal.car_brand.isnot(None))
+        if not current_user.is_admin:
+            car_brands_q = car_brands_q.filter(Deal.visible_to_user_criteria(current_user))
+        car_brands = [b[0] for b in car_brands_q.distinct().order_by(Deal.car_brand).all()]
 
         return render_template('catalog.html', ads=deals, category=cat, risk=risk, sort=sort,
                                tab=tab, date_from=date_from, date_to=date_to,
@@ -1232,12 +1259,22 @@ def create_app():
             db.session.commit()
             log_action('existing_investment_created', 'investment', inv.id,
                        f'user={user.username}, deal={deal.title}, amount={form.amount.data}')
-            # Телеграм-события: активная инвестиция = аналог подтверждения;
-            # доступ к сделке расширен — дедуп отсечёт уже уведомлённых
+            # БАГ 8: emit_deal_published фан-аутится на ВСЕХ подходящих
+            # пользователей сделки (visibility=all/selected + личные фильтры
+            # BotFilter), а не только на того, кому мы только что открыли
+            # доступ строкой выше (deal.visible_to.append(user)) — при
+            # регистрации давно известной офлайн-инвестиции это будило бы
+            # «🆕 Новая сделка» у всех инвесторов, которым сделка уже видна.
+            # Точечной «уведомить только этого пользователя о сделке» функции
+            # в bot_events нет, а сам bot_events.py в этой сессии не трогаем
+            # (правит другой агент) — поэтому минимальный корректный вариант:
+            # emit_deal_published здесь не зовём вовсе, ограничиваемся личным
+            # событием подтверждения инвестиции (только если она сразу active;
+            # для pending/rejected/closed никакого deal-уведомления нет и
+            # раньше не предполагалось).
             if inv.status == 'active':
                 emit_bot_event(bot_events.emit_investment_event, inv,
                                bot_events.EVENT_INV_CONFIRMED)
-            emit_bot_event(bot_events.emit_deal_published, deal)
             flash(f'Сделка для {user.full_name} зарегистрирована', 'success')
             return redirect(url_for('admin_dashboard'))
 
@@ -1369,9 +1406,15 @@ def create_app():
             db.session.add(txn)
             db.session.commit()
             # Начисление прибыли — единственный денежный переход, который
-            # инвестор иначе не увидел бы в телеграме
-            emit_bot_event(bot_events.emit_investment_event, inv,
-                           bot_events.EVENT_PROFIT_PAID, amount_paid=diff)
+            # инвестор иначе не увидел бы в телеграме. Но шлём уведомление
+            # только для active/closed: rejected/pending обычно означает,
+            # что админ ошибся строкой — «Начислена прибыль» по отклонённой
+            # или ещё не подтверждённой заявке вводит инвестора в заблуждение.
+            # Саму транзакцию не трогаем — учётная логика прибыли не меняется,
+            # ограничиваем только TG-уведомление.
+            if inv.status in ('active', 'closed'):
+                emit_bot_event(bot_events.emit_investment_event, inv,
+                               bot_events.EVENT_PROFIT_PAID, amount_paid=diff)
 
         log_action('profit_updated', 'investment', inv.id,
                    f'actual_profit={new_profit}, old={old_profit}')

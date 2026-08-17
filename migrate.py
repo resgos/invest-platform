@@ -173,6 +173,59 @@ def m_006_car_details(c: sqlite3.Cursor) -> None:
             c.execute(f"ALTER TABLE deals ADD COLUMN {name} {ddl_type}")
 
 
+def m_007_deal_starting_horizon(c: sqlite3.Cursor) -> None:
+    """Переводит исторический event_type='deal_starting' в формат с горизонтом.
+
+    До этого коммита ключ дедупа bot_notifications для «сделка скоро стартует»
+    был единым 'deal_starting' для всех горизонтов; теперь горизонт входит в
+    event_type ('deal_starting_3', 'deal_starting_1', ...), см. EVENT_DEAL_STARTING
+    и emit_deal_starting() в bot_events.py. Без этой миграции первый же прогон
+    notify_upcoming.py по прежнему горизонту не найдёт строку 'deal_starting_3'
+    (дедуп ищет по новому имени), создаст новую и пользователь получит повторное
+    «Сделка скоро стартует» по уже отработанной сделке.
+
+    Горизонт исторических строк нигде не сохранялся (event_type был один на все
+    горизонты) — восстановить его точно нельзя. Выбор: помечаем историю дефолтным
+    горизонтом крона notify_upcoming.py (--days по умолчанию 3, см. notify_upcoming.py)
+    — это тот горизонт, с которым cron реально запускается в проде чаще всего,
+    так что для подавляющего большинства строк переименование окажется точным,
+    а не просто "любым правдоподобным". Для меньшинства, где исторически
+    использовался другой --days, дубля всё равно не будет: emit_deal_starting
+    с ЭТИМ горизонтом создаст СВОЙ event_type (deal_starting_1 и т.п.) — по
+    определению не то же самое напоминание, что 'сделка стартует через 3 дня',
+    так что дедуп по горизонту 3 их не касается и не обязан их ловить.
+
+    Страховка от дублей: если для пары (user_id, deal_id) уже существует строка
+    'deal_starting_3' (redeploy успел прогнать notify_upcoming.py ДО этой
+    миграции и создал новую строку рядом со старой) — простое переименование
+    задело бы уникальный индекс uq_bot_notif_user_deal_event (user_id, deal_id,
+    event_type; partial WHERE investment_id IS NULL). В этом случае старая
+    'deal_starting'-строка избыточна (новая 'deal_starting_3' уже отражает
+    актуальное состояние отправки) и просто удаляется, а не оставляется
+    недостижимым хвостом под именем, которое код больше никогда не создаст
+    и не продедупит.
+    """
+    if not table_exists(c, 'bot_notifications'):
+        return  # свежая БД — db.create_all() создаст таблицу уже в новом формате
+    if not col_exists(c, 'bot_notifications', 'event_type'):
+        return  # неожиданная схема — нечего мигрировать
+
+    c.execute("SELECT id FROM bot_notifications WHERE event_type = 'deal_starting'")
+    legacy_ids = [row[0] for row in c.fetchall()]
+    for row_id in legacy_ids:
+        try:
+            c.execute(
+                "UPDATE bot_notifications SET event_type = 'deal_starting_3' WHERE id = ?",
+                (row_id,),
+            )
+        except sqlite3.IntegrityError:
+            # Конфликт с уже существующей 'deal_starting_3' для той же пары
+            # (user_id, deal_id) — старая строка избыточна, удаляем её.
+            # SQLite откатывает только упавший statement, не всю транзакцию,
+            # поэтому продолжать цикл после этой ошибки безопасно.
+            c.execute("DELETE FROM bot_notifications WHERE id = ?", (row_id,))
+
+
 MIGRATIONS = [
     ('001_investment_dates', m_001_investment_dates),
     ('002_deal_date_start',  m_002_deal_date_start),
@@ -180,6 +233,7 @@ MIGRATIONS = [
     ('004_deal_market_value', m_004_deal_market_value),
     ('005_telegram_bot', m_005_telegram_bot),
     ('006_car_details', m_006_car_details),
+    ('007_deal_starting_horizon', m_007_deal_starting_horizon),
 ]
 
 
