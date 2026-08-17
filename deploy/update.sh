@@ -84,12 +84,24 @@ else
     warn "migrate.py не найден — пропускаем"
 fi
 
-# 5. Перезапуск + обновление nginx-конфига если изменился
+# 5. Перезапуск + обновление nginx-конфига если изменился.
+# ВАЖНО: конфиг, в который certbot дописал SSL, НЕ трогаем — иначе деплой
+# затирает сертификаты и слушателя 443, и сайт молча теряет HTTPS
+# (реально случилось на проде 17.08.2026). Репозиторный nginx.conf не знает
+# про домен и сертификаты; чтобы применить его поверх HTTPS-конфига, нужно
+# осознанное решение: FORCE_NGINX=1 bash update.sh, а после — certbot --reinstall.
 NGINX_TARGET="/etc/nginx/sites-available/${NGINX_SITE}"
 if [[ -f "$APP_DIR/deploy/nginx.conf" ]] && [[ -f "$NGINX_TARGET" ]] && ! cmp -s "$APP_DIR/deploy/nginx.conf" "$NGINX_TARGET"; then
-    info "nginx.conf изменился — обновляем"
-    cp "$APP_DIR/deploy/nginx.conf" "$NGINX_TARGET"
-    nginx -t && systemctl reload nginx
+    if grep -q "managed by Certbot" "$NGINX_TARGET" && [[ "${FORCE_NGINX:-0}" != "1" ]]; then
+        warn "nginx.conf под управлением certbot (HTTPS) — НЕ перезаписываю."
+        warn "  Нужно применить репозиторный конфиг: FORCE_NGINX=1 bash deploy/update.sh,"
+        warn "  затем вернуть сертификат: sudo certbot --nginx -d <домен> --reinstall --redirect"
+    else
+        info "nginx.conf изменился — обновляем"
+        cp "$NGINX_TARGET" "${NGINX_TARGET}.bak.$(date +%Y%m%d-%H%M%S)"
+        cp "$APP_DIR/deploy/nginx.conf" "$NGINX_TARGET"
+        nginx -t && systemctl reload nginx
+    fi
 fi
 
 SERVICE_TARGET="/etc/systemd/system/${SERVICE_FILE}"

@@ -5,7 +5,7 @@ from functools import wraps
 from dateutil.relativedelta import relativedelta
 
 import bcrypt
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from flask import (Flask, render_template, request, redirect, url_for,
                    flash, send_from_directory, session, jsonify, abort)
 from flask_wtf.csrf import CSRFProtect
@@ -236,7 +236,18 @@ def create_app():
     # Под gunicorn 3 воркера форкаются параллельно и каждый выполняет этот блок —
     # без try/except это даёт UNIQUE-конфликт по email/username при первом запуске.
     with app.app_context():
-        db.create_all()
+        try:
+            db.create_all()
+        except OperationalError as e:
+            # Гонка воркеров: SQLite не атомарен между «проверил, что таблицы нет»
+            # и CREATE TABLE — второй воркер получает «table ... already exists»
+            # и падает с exit 3, роняя весь gunicorn («Worker failed to boot»).
+            # Реально случилось на проде при выкатке таблиц бота 17.08.2026.
+            # Таблицы к этому моменту уже созданы соседним воркером — продолжаем.
+            db.session.rollback()
+            if 'already exists' not in str(e).lower():
+                raise
+            app.logger.info(f'DB init: таблицы уже создаются другим воркером ({e.__class__.__name__})')
         try:
             admin = User.query.filter_by(username=app.config['ADMIN_USERNAME']).first()
             if not admin:
