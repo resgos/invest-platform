@@ -314,3 +314,14 @@ document.addEventListener('DOMContentLoaded', function () {
         update();
     });
 });
+
+// ─── Каталог: авто-фильтры видны при категории «Автомобили» (до сабмита) ───
+document.addEventListener('DOMContentLoaded', function () {
+    var catSelect = document.querySelector('.filter-bar select[name="category"]');
+    var carBlock = document.getElementById('car-filters');
+    if (catSelect && carBlock) {
+        catSelect.addEventListener('change', function () {
+            carBlock.classList.toggle('d-none', catSelect.value !== 'auto');
+        });
+    }
+});

@@ -118,6 +118,7 @@ ok "Миграции применены"
 # ── 7. systemd unit ──
 info "Шаг 7/9: systemd unit..."
 cp "$APP_DIR/deploy/gruppa-titan.service" /etc/systemd/system/
+cp "$APP_DIR/deploy/gruppa-titan-bot.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable redis-server >/dev/null 2>&1 || true
 systemctl restart redis-server
@@ -131,6 +132,17 @@ if systemctl is-active --quiet gruppa-titan; then
 else
     warn "Сервис не стартовал — продолжаем установку. Проверьте после правки .env:"
     warn "    sudo journalctl -u gruppa-titan -n 50"
+fi
+
+# Телеграм-бот (отдельный процесс; без токена в .env не стартует — это норма)
+systemctl enable gruppa-titan-bot >/dev/null 2>&1 || true
+systemctl restart gruppa-titan-bot || true
+sleep 2
+if systemctl is-active --quiet gruppa-titan-bot; then
+    ok "Телеграм-бот gruppa-titan-bot запущен"
+else
+    warn "Бот не стартовал (нужен TELEGRAM_BOT_TOKEN/TELEGRAM_USER_BOT_TOKEN в .env)."
+    warn "После правки .env: sudo systemctl restart gruppa-titan-bot"
 fi
 
 # ── 8. Nginx ──

@@ -7,6 +7,13 @@ import re
 from datetime import date
 
 
+def _validate_telegram_id(field):
+    """Единая проверка Telegram ID для форм создания и редактирования.
+    До 16 цифр — Bot API гарантирует ID в пределах 52 бит (~4.5×10^15)."""
+    if field.data and not re.match(r'^\d{1,16}$', str(field.data).strip()):
+        raise ValidationError('Telegram ID — только цифры (узнать: @userinfobot или /myid у бота)')
+
+
 class LoginForm(FlaskForm):
     username = StringField('Логин', validators=[
         DataRequired(message='Введите логин'),
@@ -31,6 +38,7 @@ class CreateUserForm(FlaskForm):
         Length(max=150)
     ])
     phone = StringField('Телефон', validators=[Optional(), Length(max=30)])
+    telegram_id = StringField('Telegram ID', validators=[Optional(), Length(max=20)])
     password = PasswordField('Пароль', validators=[
         DataRequired(message='Введите пароль'),
         Length(min=8, message='Минимум 8 символов')
@@ -43,6 +51,9 @@ class CreateUserForm(FlaskForm):
     def validate_username(self, field):
         if not re.match(r'^[a-zA-Z0-9_]+$', field.data):
             raise ValidationError('Только латинские буквы, цифры и _')
+
+    def validate_telegram_id(self, field):
+        _validate_telegram_id(field)
 
     def validate_password(self, field):
         pw = field.data
@@ -64,11 +75,15 @@ class EditUserForm(FlaskForm):
         Email(message='Некорректный email')
     ])
     phone = StringField('Телефон', validators=[Optional(), Length(max=30)])
+    telegram_id = StringField('Telegram ID', validators=[Optional(), Length(max=20)])
     is_active = BooleanField('Активен')
     new_password = PasswordField('Новый пароль (оставьте пустым для сохранения)', validators=[
         Optional(),
         Length(min=8, message='Минимум 8 символов')
     ])
+
+    def validate_telegram_id(self, field):
+        _validate_telegram_id(field)
 
 
 class DealForm(FlaskForm):
@@ -160,19 +175,44 @@ class DealForm(FlaskForm):
     floor = StringField('Этаж', validators=[Optional()])
     total_floors = StringField('Всего этажей', validators=[Optional()])
 
-    # Auto
+    # Auto — характеристики по образцу Авто.ру/Дром
     car_brand = StringField('Марка', validators=[Optional()])
     car_model = StringField('Модель', validators=[Optional()])
     car_year = StringField('Год', validators=[Optional()])
     car_power = StringField('Мощность (л.с.)', validators=[Optional()])
     car_mileage = StringField('Пробег (км)', validators=[Optional()])
+    car_engine_volume = StringField('Объём двигателя (л)', validators=[Optional()])
     car_transmission = SelectField('КПП', choices=[
-        ('', '—'), ('auto', 'Автомат'), ('manual', 'Механика')
+        ('', '—'), ('auto', 'Автомат'), ('manual', 'Механика'),
+        ('robot', 'Робот'), ('variator', 'Вариатор')
     ], validators=[Optional()])
     car_fuel = SelectField('Топливо', choices=[
         ('', '—'), ('petrol', 'Бензин'), ('diesel', 'Дизель'),
-        ('electric', 'Электро'), ('hybrid', 'Гибрид')
+        ('electric', 'Электро'), ('hybrid', 'Гибрид'), ('gas', 'Газ (LPG)')
     ], validators=[Optional()])
+    car_body = SelectField('Кузов', choices=[
+        ('', '—'), ('sedan', 'Седан'), ('hatchback', 'Хэтчбек'),
+        ('wagon', 'Универсал'), ('suv', 'Внедорожник'), ('coupe', 'Купе'),
+        ('minivan', 'Минивэн'), ('pickup', 'Пикап'), ('liftback', 'Лифтбек'),
+        ('cabrio', 'Кабриолет'), ('van', 'Фургон')
+    ], validators=[Optional()])
+    car_drive = SelectField('Привод', choices=[
+        ('', '—'), ('fwd', 'Передний'), ('rwd', 'Задний'), ('awd', 'Полный')
+    ], validators=[Optional()])
+    car_wheel = SelectField('Руль', choices=[
+        ('', '—'), ('left', 'Левый'), ('right', 'Правый')
+    ], validators=[Optional()])
+    car_owners = SelectField('Владельцев по ПТС', choices=[
+        ('', '—'), ('1', '1'), ('2', '2'), ('3', '3 и более')
+    ], validators=[Optional()])
+    car_condition = SelectField('Состояние', choices=[
+        ('', '—'), ('not_beaten', 'Не битый'), ('beaten', 'Битый')
+    ], validators=[Optional()])
+    car_pts = SelectField('ПТС', choices=[
+        ('', '—'), ('original', 'Оригинал'), ('duplicate', 'Дубликат')
+    ], validators=[Optional()])
+    car_color = StringField('Цвет', validators=[Optional(), Length(max=30)])
+    car_vin = StringField('VIN', validators=[Optional(), Length(max=20)])
 
 
 class ExistingDealForm(FlaskForm):

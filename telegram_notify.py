@@ -20,6 +20,7 @@ Telegram Bot — уведомления об инвестициях.
   сообщение будет залогировано, но не потеряно.
 """
 
+import html
 import logging
 import threading
 import json
@@ -29,6 +30,17 @@ from urllib.request import Request, urlopen, ProxyHandler, build_opener
 from urllib.error import URLError, HTTPError
 
 logger = logging.getLogger(__name__)
+
+
+def fmt_money(x):
+    """Рубли с пробелами-разрядами: 1 500 000. Единая точка для всех сообщений."""
+    return f'{(x or 0):,.0f}'.replace(',', ' ')
+
+
+def esc(s):
+    """HTML-экранирование для parse_mode=HTML — название сделки с «<» или «&»
+    иначе роняет sendMessage (400 Bad Request)."""
+    return html.escape(str(s or ''), quote=False)
 
 # Category labels
 CATEGORY_LABELS = {

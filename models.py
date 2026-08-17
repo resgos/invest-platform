@@ -1,8 +1,44 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from datetime import datetime, timezone, date, timedelta
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 db = SQLAlchemy()
+
+
+@event.listens_for(Engine, 'connect')
+def _sqlite_pragmas(dbapi_conn, _record):
+    """WAL + busy_timeout для SQLite: к базе одновременно ходят gunicorn-воркеры
+    и отдельный процесс телеграм-бота (tg_bot.py) — без WAL писатели блокируют
+    читателей и наоборот. Для не-SQLite соединений — no-op."""
+    import sqlite3
+    if not isinstance(dbapi_conn, sqlite3.Connection):
+        return
+    cur = dbapi_conn.cursor()
+    cur.execute('PRAGMA journal_mode=WAL')
+    cur.execute('PRAGMA busy_timeout=5000')
+    cur.execute('PRAGMA foreign_keys=ON')
+    cur.close()
+
+
+# Человекочитаемые подписи автомобильных характеристик — единый словарь
+# для шаблонов (детальная страница, каталог) и телеграм-сообщений
+CAR_LABELS = {
+    'transmission': {'manual': 'Механика', 'auto': 'Автомат',
+                     'robot': 'Робот', 'variator': 'Вариатор'},
+    'fuel': {'petrol': 'Бензин', 'diesel': 'Дизель', 'hybrid': 'Гибрид',
+             'electric': 'Электро', 'gas': 'Газ (LPG)'},
+    'body': {'sedan': 'Седан', 'hatchback': 'Хэтчбек', 'wagon': 'Универсал',
+             'suv': 'Внедорожник', 'coupe': 'Купе', 'minivan': 'Минивэн',
+             'pickup': 'Пикап', 'liftback': 'Лифтбек', 'cabrio': 'Кабриолет',
+             'van': 'Фургон'},
+    'drive': {'fwd': 'Передний', 'rwd': 'Задний', 'awd': 'Полный'},
+    'wheel': {'left': 'Левый', 'right': 'Правый'},
+    'condition': {'not_beaten': 'Не битый', 'beaten': 'Битый'},
+    'pts': {'original': 'Оригинал', 'duplicate': 'Дубликат'},
+    'owners': {1: '1 владелец', 2: '2 владельца', 3: '3 и более'},
+}
 
 
 # Many-to-many: which investors can see which deals
@@ -23,6 +59,10 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(128), nullable=False)
     full_name = db.Column(db.String(150), nullable=False)
     phone = db.Column(db.String(30))
+    # Telegram ID для доступа к боту (tg_bot.py). Прописывает админ; бот работает
+    # ТОЛЬКО с пользователями, у которых поле заполнено. BigInteger — id Telegram
+    # уже перевалили за int32.
+    telegram_id = db.Column(db.BigInteger, unique=True, nullable=True, index=True)
     role = db.Column(db.String(20), nullable=False, default='investor', index=True)
     is_active = db.Column(db.Boolean, default=True)
     failed_login_attempts = db.Column(db.Integer, default=0)
@@ -90,14 +130,23 @@ class Deal(db.Model):
     floor = db.Column(db.Integer)
     total_floors = db.Column(db.Integer)
 
-    # Auto fields
+    # Auto fields (набор характеристик по образцу Авто.ру/Дром)
     car_brand = db.Column(db.String(50))
     car_model = db.Column(db.String(50))
     car_year = db.Column(db.Integer)
-    car_power = db.Column(db.Integer)
-    car_mileage = db.Column(db.Integer)
-    car_transmission = db.Column(db.String(30))
-    car_fuel = db.Column(db.String(30))
+    car_power = db.Column(db.Integer)          # л.с.
+    car_mileage = db.Column(db.Integer)        # км
+    car_transmission = db.Column(db.String(30))  # manual|auto|robot|variator
+    car_fuel = db.Column(db.String(30))          # petrol|diesel|hybrid|electric|gas
+    car_body = db.Column(db.String(30))          # sedan|hatchback|wagon|suv|coupe|minivan|pickup|liftback|cabrio|van
+    car_engine_volume = db.Column(db.Float)      # л
+    car_drive = db.Column(db.String(10))         # fwd|rwd|awd
+    car_wheel = db.Column(db.String(10))         # left|right
+    car_owners = db.Column(db.Integer)           # владельцев по ПТС: 1|2|3 (3 = «3 и более»)
+    car_condition = db.Column(db.String(20))     # not_beaten|beaten
+    car_pts = db.Column(db.String(12))           # original|duplicate
+    car_color = db.Column(db.String(30))
+    car_vin = db.Column(db.String(20))
 
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
@@ -229,6 +278,36 @@ class Deal(db.Model):
             return True
         return False
 
+    def accepts_investors(self, today=None):
+        """Единое бизнес-правило «сделка принимает новых инвесторов»:
+        активна, срок приёма не истёк, фиксированный старт ещё не наступил.
+        Используется роутом invest, шиной бота и каталогом (SQL-версия ниже) —
+        менять политику ТОЛЬКО здесь."""
+        today = today or date.today()
+        if self.status != 'active':
+            return False
+        if self.date_end and self.date_end < today:
+            return False
+        if self.date_start and self.date_start <= today:
+            return False
+        return True
+
+    @classmethod
+    def accepting_criteria(cls, today=None):
+        """SQL-эквивалент accepts_investors для query.filter(*...)."""
+        today = today or date.today()
+        return [
+            cls.status == 'active',
+            db.or_(cls.date_end.is_(None), cls.date_end >= today),
+            db.or_(cls.date_start.is_(None), cls.date_start > today),
+        ]
+
+    @classmethod
+    def visible_to_user_criteria(cls, user):
+        """SQL-предикат видимости сделок пользователю (админ видит всё —
+        вызывающий код не применяет предикат для админа)."""
+        return db.or_(cls.visibility == 'all', cls.visible_to.any(id=user.id))
+
 
 class Investment(db.Model):
     """
@@ -339,6 +418,77 @@ class Transaction(db.Model):
     amount = db.Column(db.Float, nullable=False)
     description = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class BotFilter(db.Model):
+    """
+    Фильтры телеграм-уведомлений пользователя (одна строка на пользователя).
+
+    Пустая строка/NULL в categories/risk_levels = «все». Событие по сделке
+    сохраняется пользователю, только если сделка проходит фильтры И видима ему
+    (Deal.user_can_see). Настраивается самим пользователем в боте (/filters).
+    """
+    __tablename__ = 'bot_filters'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'),
+                        nullable=False, unique=True, index=True)
+    enabled = db.Column(db.Boolean, nullable=False, default=True)
+    categories = db.Column(db.String(200), nullable=True)   # CSV: realestate,auto,...
+    risk_levels = db.Column(db.String(60), nullable=True)   # CSV: low,medium,high
+    min_profit_pct = db.Column(db.Float, nullable=True)     # мин. доходность, NULL = любая
+    max_entry = db.Column(db.Float, nullable=True)          # макс. порог входа (min_investment), NULL = любой
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+
+    user = db.relationship('User', backref=db.backref('bot_filter', uselist=False))
+
+    def categories_list(self):
+        return [c for c in (self.categories or '').split(',') if c]
+
+    def risk_list(self):
+        return [r for r in (self.risk_levels or '').split(',') if r]
+
+
+class BotNotification(db.Model):
+    """
+    Сохранённое событие для пользователя (outbox телеграм-бота).
+
+    Веб-приложение при событии (новая сделка, смена статуса заявки, скорый старт)
+    сохраняет строку; отдельный процесс tg_bot.py доставляет pending-строки в личку
+    и помечает sent. События хранятся и после отправки — это лента /feed в боте.
+    """
+    __tablename__ = 'bot_notifications'
+    __table_args__ = (
+        # Дедуп deal-уровневых событий (deal_published/deal_starting): одно событие
+        # типа на пользователя и сделку. Partial-индекс — персональные события по
+        # инвестициям (investment_id NOT NULL) не ограничиваем: у пользователя может
+        # быть несколько инвестиций в одну сделку.
+        db.Index('uq_bot_notif_user_deal_event', 'user_id', 'deal_id', 'event_type',
+                 unique=True,
+                 sqlite_where=db.text('investment_id IS NULL'),
+                 postgresql_where=db.text('investment_id IS NULL')),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'),
+                        nullable=False, index=True)
+    deal_id = db.Column(db.Integer, db.ForeignKey('deals.id', ondelete='CASCADE'),
+                        nullable=True, index=True)
+    investment_id = db.Column(db.Integer, db.ForeignKey('investments.id'), nullable=True)
+    event_type = db.Column(db.String(40), nullable=False, index=True)
+    # deal_published | deal_starting_<N> | investment_confirmed | investment_rejected
+    # | investment_closed | profit_paid
+    message = db.Column(db.Text, nullable=False)
+    # pending → sent | failed (перманентная ошибка/исчерпаны ретраи)
+    #         | cancelled (сделка скрыта/на паузе к моменту доставки)
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)
+    attempts = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    sent_at = db.Column(db.DateTime, nullable=True)
+
+    user = db.relationship('User', backref=db.backref('bot_notifications', lazy='dynamic'))
+    deal = db.relationship('Deal')
 
 
 class AuditLog(db.Model):

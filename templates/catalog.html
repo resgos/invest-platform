@@ -8,18 +8,40 @@
       <p class="text-muted-light">Доступные вам предложения</p>
     </div>
 
+    {# БАГ 11a: единый набор активных фильтров для всех таб-ссылок — собираем
+       один раз и раскрываем через **, чтобы новый фильтр не забыли добавить
+       в четырёх местах. Пустые значения — None, url_for их не сериализует
+       в query string (не заляпываем ссылку "car_brand=&car_year_from=..."). #}
+    {% set filter_params = {
+      'category': category,
+      'risk': risk,
+      'sort': sort,
+      'date_from': date_from or None,
+      'date_to': date_to or None,
+      'price_from': price_from or None,
+      'price_to': price_to or None,
+      'car_brand': car_filters.brand or None,
+      'car_year_from': car_filters.year_from or None,
+      'car_year_to': car_filters.year_to or None,
+      'car_mileage_to': car_filters.mileage_to or None,
+      'car_transmission': car_filters.transmission or None,
+      'car_fuel': car_filters.fuel or None,
+      'car_drive': car_filters.drive or None,
+      'car_body': car_filters.body or None,
+    } %}
+
     <!-- Tabs -->
     <div class="tab-bar mb-3">
-      <a href="{{ url_for('catalog', tab='active', category=category, risk=risk, sort=sort) }}" class="tab-item {% if tab == 'active' %}active{% endif %}">
+      <a href="{{ url_for('catalog', tab='active', **filter_params) }}" class="tab-item {% if tab == 'active' %}active{% endif %}">
         <i class="fas fa-check-circle me-1"></i>Активные <span class="tab-count">{{ active_count }}</span>
       </a>
-      <a href="{{ url_for('catalog', tab='hot', category=category, risk=risk, sort=sort) }}" class="tab-item tab-hot {% if tab == 'hot' %}active{% endif %}">
+      <a href="{{ url_for('catalog', tab='hot', **filter_params) }}" class="tab-item tab-hot {% if tab == 'hot' %}active{% endif %}">
         <i class="fas fa-fire me-1"></i>Скоро старт <span class="tab-count">{{ hot_count }}</span>
       </a>
-      <a href="{{ url_for('catalog', tab='closed', category=category, risk=risk, sort=sort) }}" class="tab-item {% if tab == 'closed' %}active{% endif %}">
+      <a href="{{ url_for('catalog', tab='closed', **filter_params) }}" class="tab-item {% if tab == 'closed' %}active{% endif %}">
         <i class="fas fa-archive me-1"></i>Завершённые <span class="tab-count">{{ closed_count }}</span>
       </a>
-      <a href="{{ url_for('catalog', tab='all', category=category, risk=risk, sort=sort) }}" class="tab-item {% if tab == 'all' %}active{% endif %}">
+      <a href="{{ url_for('catalog', tab='all', **filter_params) }}" class="tab-item {% if tab == 'all' %}active{% endif %}">
         <i class="fas fa-list me-1"></i>Все <span class="tab-count">{{ all_count }}</span>
       </a>
     </div>
@@ -49,6 +71,14 @@
           </select>
         </div>
         <div class="col-lg-2 col-md-4 col-6">
+          <label class="form-label">Цена от, ₽</label>
+          <input type="text" name="price_from" class="form-control" inputmode="numeric" placeholder="500 000" value="{{ price_from }}">
+        </div>
+        <div class="col-lg-2 col-md-4 col-6">
+          <label class="form-label">Цена до, ₽</label>
+          <input type="text" name="price_to" class="form-control" inputmode="numeric" placeholder="5 000 000" value="{{ price_to }}">
+        </div>
+        <div class="col-lg-2 col-md-4 col-6">
           <label class="form-label">Период с</label>
           <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
         </div>
@@ -67,6 +97,60 @@
             <option value="end_date" {{ 'selected' if sort=='end_date' }}>По дате окончания</option>
           </select>
         </div>
+
+        {# Авто-фильтры (по образцу Авто.ру/Дром) — видны при категории «Автомобили» #}
+        <div id="car-filters" class="col-12 {{ '' if category=='auto' else 'd-none' }}">
+          <div class="row g-3 align-items-end pt-2 mt-1" style="border-top:1px solid var(--border-color)">
+            <div class="col-lg-2 col-md-4 col-6">
+              <label class="form-label">Марка</label>
+              <select name="car_brand" class="form-select">
+                <option value="">Любая</option>
+                {% for b in car_brands %}<option value="{{ b }}" {{ 'selected' if car_filters.brand==b }}>{{ b }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-lg-1 col-md-2 col-6">
+              <label class="form-label">Год от</label>
+              <input type="text" name="car_year_from" class="form-control" inputmode="numeric" placeholder="2015" value="{{ car_filters.year_from }}">
+            </div>
+            <div class="col-lg-1 col-md-2 col-6">
+              <label class="form-label">Год до</label>
+              <input type="text" name="car_year_to" class="form-control" inputmode="numeric" placeholder="2026" value="{{ car_filters.year_to }}">
+            </div>
+            <div class="col-lg-2 col-md-4 col-6">
+              <label class="form-label">Пробег до, км</label>
+              <input type="text" name="car_mileage_to" class="form-control" inputmode="numeric" placeholder="100 000" value="{{ car_filters.mileage_to }}">
+            </div>
+            <div class="col-lg-2 col-md-4 col-6">
+              <label class="form-label">Кузов</label>
+              <select name="car_body" class="form-select">
+                <option value="">Любой</option>
+                {% for key, label in CAR_LABELS['body'].items() %}<option value="{{ key }}" {{ 'selected' if car_filters.body==key }}>{{ label }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-lg-2 col-md-4 col-6">
+              <label class="form-label">КПП</label>
+              <select name="car_transmission" class="form-select">
+                <option value="">Любая</option>
+                {% for key, label in CAR_LABELS['transmission'].items() %}<option value="{{ key }}" {{ 'selected' if car_filters.transmission==key }}>{{ label }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-lg-2 col-md-4 col-6">
+              <label class="form-label">Топливо</label>
+              <select name="car_fuel" class="form-select">
+                <option value="">Любое</option>
+                {% for key, label in CAR_LABELS['fuel'].items() %}<option value="{{ key }}" {{ 'selected' if car_filters.fuel==key }}>{{ label }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-lg-2 col-md-4 col-6">
+              <label class="form-label">Привод</label>
+              <select name="car_drive" class="form-select">
+                <option value="">Любой</option>
+                {% for key, label in CAR_LABELS['drive'].items() %}<option value="{{ key }}" {{ 'selected' if car_filters.drive==key }}>{{ label }}</option>{% endfor %}
+              </select>
+            </div>
+          </div>
+        </div>
+
         <div class="col-lg-2 col-md-4 col-6"><button type="submit" class="btn btn-accent w-100"><i class="fas fa-filter me-1"></i>Применить</button></div>
       </form>
     </div>
@@ -81,7 +165,7 @@
           <div class="card-img-wrapper">
             {% if ad.images %}<img src="{{ url_for('uploaded_file', filename=ad.images.split(',')[0]) }}" class="card-img-invest" alt="{{ ad.title }}">
             {% else %}<img src="{{ url_for('static', filename='img/placeholders/' + ad.category + '.jpg') }}" class="card-img-invest" alt="{{ ad.title }}">{% endif %}
-            {% if ad.is_urgent_sale %}<span class="card-badge" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;font-weight:600">Срочная продажа</span>
+            {% if ad.is_urgent_sale %}<span class="card-badge" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:var(--text-bright);font-weight:600">Срочная продажа</span>
             {% else %}<span class="card-badge badge-{{ ad.risk_level }}">{{ {'low':'Низкий','medium':'Средний','high':'Высокий'}.get(ad.risk_level, ad.risk_level) }}</span>{% endif %}
             {% if ad.is_expired %}<span class="card-badge-status badge-closed-status">Завершена</span>
             {% elif ad.is_starting_soon %}<span class="card-badge-status badge-hot"><i class="fas fa-fire me-1"></i>{% if ad.days_until_start == 0 %}Старт сегодня{% elif ad.days_until_start == 1 %}Старт завтра{% else %}Старт через {{ ad.days_until_start }} дн.{% endif %}</span>{% endif %}
@@ -122,7 +206,7 @@
       {% endfor %}
     </div>
     {% else %}
-    <div class="glass-card text-center py-5"><i class="fas fa-inbox fa-3x mb-3" style="color:var(--text-muted)"></i><h4 style="color:#fff">Нет предложений</h4><p class="text-muted-light">{% if tab == 'closed' %}Нет завершённых сделок{% elif tab == 'active' %}Нет активных сделок{% elif tab == 'hot' %}Нет сделок, стартующих в ближайшие 7 дней{% else %}Новые сделки появятся в ближайшее время{% endif %}</p></div>
+    <div class="glass-card text-center py-5"><i class="fas fa-inbox fa-3x mb-3" style="color:var(--text-muted)"></i><h4 style="color:var(--text-bright)">Нет предложений</h4><p class="text-muted-light">{% if tab == 'closed' %}Нет завершённых сделок{% elif tab == 'active' %}Нет активных сделок{% elif tab == 'hot' %}Нет сделок, стартующих в ближайшие 7 дней{% else %}Новые сделки появятся в ближайшее время{% endif %}</p></div>
     {% endif %}
   </div>
 </section>

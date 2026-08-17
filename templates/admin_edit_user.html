@@ -27,6 +27,12 @@
             {{ form.phone(class="form-control") }}
           </div>
           <div class="col-md-6">
+            <label class="form-label">{{ form.telegram_id.label.text }}</label>
+            {{ form.telegram_id(class="form-control", placeholder="123456789", inputmode="numeric") }}
+            {% for err in form.telegram_id.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+            <small class="text-muted">Доступ к телеграм-боту: только пользователи с прописанным ID. Пусто — доступ закрыт</small>
+          </div>
+          <div class="col-md-6">
             <label class="form-label">{{ form.new_password.label.text }}</label>
             {{ form.new_password(class="form-control", placeholder="Оставьте пустым") }}
             {% for err in form.new_password.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}

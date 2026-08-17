@@ -29,6 +29,12 @@
             {{ form.phone(class="form-control", placeholder="+7 900 123-45-67") }}
           </div>
           <div class="col-md-6">
+            <label class="form-label">{{ form.telegram_id.label.text }}</label>
+            {{ form.telegram_id(class="form-control", placeholder="123456789", inputmode="numeric") }}
+            {% for err in form.telegram_id.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}
+            <small class="text-muted">Доступ к телеграм-боту. Пользователь может узнать свой ID у бота или через @userinfobot</small>
+          </div>
+          <div class="col-md-6">
             <label class="form-label">{{ form.password.label.text }}</label>
             {{ form.password(class="form-control", placeholder="Мин. 8 символов") }}
             {% for err in form.password.errors %}<small class="text-danger">{{ err }}</small>{% endfor %}

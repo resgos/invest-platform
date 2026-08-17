@@ -5,6 +5,7 @@ from functools import wraps
 from dateutil.relativedelta import relativedelta
 
 import bcrypt
+from sqlalchemy.exc import IntegrityError
 from flask import (Flask, render_template, request, redirect, url_for,
                    flash, send_from_directory, session, jsonify, abort)
 from flask_wtf.csrf import CSRFProtect
@@ -14,12 +15,14 @@ from flask_login import LoginManager, login_user, logout_user, login_required, c
 from werkzeug.utils import secure_filename
 
 from config import Config
-from models import db, User, Deal, Investment, Transaction, AuditLog, deal_visibility
+from models import (db, User, Deal, Investment, Transaction, AuditLog,
+                    BotNotification, deal_visibility, CAR_LABELS)
 from forms import (LoginForm, CreateUserForm, EditUserForm, DealForm,
                    ExistingDealForm, ChangePasswordForm)
 from telegram_notify import notify_investment, notify_investment_status, test_connection as tg_test_connection
 from db_backup import (create_snapshot, list_snapshots, restore_snapshot,
                        delete_snapshot, get_db_info)
+import bot_events
 
 
 # ──────────────────── App Factory ────────────────────
@@ -129,6 +132,34 @@ def create_app():
         db.session.add(entry)
         db.session.commit()
 
+    def emit_bot_event(fn, *args, **kwargs):
+        """Сохранение события для телеграм-бота: сбой шины не должен ломать
+        основной admin-флоу — логируем и продолжаем."""
+        try:
+            return fn(app, *args, **kwargs)
+        except Exception as e:
+            app.logger.error(f'bot_events: ошибка сохранения события — {e}')
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            return None
+
+    def parse_telegram_id(raw):
+        """Telegram ID из поля формы: None при пустом/пробельном вводе.
+        Optional() в WTForms пропускает whitespace-only мимо regex-валидатора —
+        без strip-гарда int('') ронял бы роут 500-й."""
+        s = str(raw or '').strip()
+        return int(s) if s.isdigit() else None
+
+    def telegram_id_taken(tg_id, exclude_user_id=None):
+        if not tg_id:
+            return False
+        q = User.query.filter(User.telegram_id == tg_id)
+        if exclude_user_id:
+            q = q.filter(User.id != exclude_user_id)
+        return q.first() is not None
+
     def safe_float(val, default=0):
         """Парсит число из пользовательского ввода. Поддерживает оба формата:
            '12345.50' (англ.) и '12345,50' (рус.). Пробелы и неразрывные пробелы
@@ -156,6 +187,21 @@ def create_app():
         except (ValueError, TypeError):
             return default
 
+    def parse_int_filter(raw):
+        """Целочисленный query-фильтр каталога ('100 000', '100\\xa0000').
+
+        В отличие от safe_int (default=0 неотличим от валидного нуля), эта
+        функция возвращает None для пустого/нераспознанного ввода — вызывающий
+        код сам решает, применять ли фильтр (и можно отличить "поле пустое"
+        от "введено 0"). Терпимость к пробелам-разрядам и NBSP — через
+        safe_float, чтобы не дублировать её логику разбора формата.
+        """
+        s = str(raw or '').strip()
+        if not s:
+            return None
+        val = safe_float(s, default=None)
+        return int(val) if val is not None else None
+
     def effective_start_date(deal, fallback):
         """Реальная дата начала инвестиции: фиксированный старт сделки (если задан и в будущем),
         иначе — fallback (обычно сегодня)."""
@@ -182,6 +228,9 @@ def create_app():
 
     # ──── Create upload dir ────
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+    # Подписи авто-характеристик доступны во всех шаблонах
+    app.jinja_env.globals['CAR_LABELS'] = CAR_LABELS
 
     # ──── DB init ────
     # Под gunicorn 3 воркера форкаются параллельно и каждый выполняет этот блок —
@@ -287,24 +336,17 @@ def create_app():
         user = current_user if current_user.is_authenticated else None
 
         # Stats - только активные сделки, ещё не стартовавшие (или без фикс. старта),
-        # и только видимые пользователю
+        # и только видимые пользователю (канон предикатов — методы Deal)
         today = date.today()
         hot_horizon = today + timedelta(days=Deal.HOT_THRESHOLD_DAYS)
-        not_started_filter = db.or_(Deal.date_start.is_(None), Deal.date_start > today)
-        not_expired_filter = db.or_(Deal.date_end.is_(None), Deal.date_end >= today)
 
+        deals_q = Deal.query.filter(*Deal.accepting_criteria(today))
         if user and user.is_admin:
-            deals_q = Deal.query.filter(Deal.status == 'active', not_started_filter, not_expired_filter)
+            pass  # админ видит всё
         elif user:
-            deals_q = Deal.query.filter(
-                Deal.status == 'active', not_started_filter, not_expired_filter,
-                db.or_(Deal.visibility == 'all', Deal.visible_to.any(id=user.id))
-            )
+            deals_q = deals_q.filter(Deal.visible_to_user_criteria(user))
         else:
-            deals_q = Deal.query.filter(
-                Deal.status == 'active', not_started_filter, not_expired_filter,
-                Deal.visibility == 'all'
-            )
+            deals_q = deals_q.filter(Deal.visibility == 'all')
 
         total_ads = deals_q.count()
         total_invested = db.session.query(db.func.coalesce(db.func.sum(Investment.amount), 0)).filter_by(status='active').scalar()
@@ -339,27 +381,31 @@ def create_app():
         tab = request.args.get('tab', 'active')  # active, closed, all
         date_from = request.args.get('date_from', '')
         date_to = request.args.get('date_to', '')
+        # Ценовой диапазон (все категории) + авто-фильтры по образцу Авто.ру/Дром
+        price_from = request.args.get('price_from', '')
+        price_to = request.args.get('price_to', '')
+        car_filters = {
+            'brand': request.args.get('car_brand', ''),
+            'year_from': request.args.get('car_year_from', ''),
+            'year_to': request.args.get('car_year_to', ''),
+            'mileage_to': request.args.get('car_mileage_to', ''),
+            'transmission': request.args.get('car_transmission', ''),
+            'fuel': request.args.get('car_fuel', ''),
+            'drive': request.args.get('car_drive', ''),
+            'body': request.args.get('car_body', ''),
+        }
 
         if current_user.is_admin:
             q = Deal.query
         else:
-            q = Deal.query.filter(
-                db.or_(
-                    Deal.visibility == 'all',
-                    Deal.visible_to.any(id=current_user.id)
-                )
-            )
+            q = Deal.query.filter(Deal.visible_to_user_criteria(current_user))
 
         # Tab filter. Сделка «активна» в каталоге, пока ещё не стартовала
         # (либо у неё нет фиксированного старта). После date_start уходит в архив.
         today = date.today()
         hot_horizon = today + timedelta(days=Deal.HOT_THRESHOLD_DAYS)
         if tab == 'active':
-            q = q.filter(
-                Deal.status == 'active',
-                db.or_(Deal.date_end.is_(None), Deal.date_end >= today),
-                db.or_(Deal.date_start.is_(None), Deal.date_start > today)
-            )
+            q = q.filter(*Deal.accepting_criteria(today))
         elif tab == 'hot':
             q = q.filter(
                 Deal.status == 'active',
@@ -396,6 +442,38 @@ def create_app():
         if risk != 'all':
             q = q.filter_by(risk_level=risk)
 
+        # Цена (сумма займа) — базовый фильтр любой площадки
+        if price_from and safe_float(price_from) > 0:
+            q = q.filter(Deal.price >= safe_float(price_from))
+        if price_to and safe_float(price_to) > 0:
+            q = q.filter(Deal.price <= safe_float(price_to))
+
+        # Авто-фильтры применяются только в категории «Автомобили».
+        # parse_int_filter (не safe_int!) — поле «100 000» с пробелом-разрядом
+        # не должно молча превращаться в default=0 и выпадать из фильтра.
+        if cat == 'auto':
+            if car_filters['brand']:
+                q = q.filter(Deal.car_brand == car_filters['brand'])
+            year_from = parse_int_filter(car_filters['year_from'])
+            if year_from is not None and year_from > 0:
+                q = q.filter(Deal.car_year >= year_from)
+            year_to = parse_int_filter(car_filters['year_to'])
+            if year_to is not None and year_to > 0:
+                q = q.filter(Deal.car_year <= year_to)
+            mileage_to = parse_int_filter(car_filters['mileage_to'])
+            # >= 0 (не > 0): «Пробег до 0» — валидный поиск новых авто,
+            # отрицательные по-прежнему тихо игнорируются
+            if mileage_to is not None and mileage_to >= 0:
+                q = q.filter(Deal.car_mileage <= mileage_to)
+            if car_filters['transmission']:
+                q = q.filter(Deal.car_transmission == car_filters['transmission'])
+            if car_filters['fuel']:
+                q = q.filter(Deal.car_fuel == car_filters['fuel'])
+            if car_filters['drive']:
+                q = q.filter(Deal.car_drive == car_filters['drive'])
+            if car_filters['body']:
+                q = q.filter(Deal.car_body == car_filters['body'])
+
         if sort == 'profit_desc':
             q = q.order_by(Deal.expected_profit_pct.desc())
         elif sort == 'price_asc':
@@ -425,14 +503,8 @@ def create_app():
         if current_user.is_admin:
             base_q = Deal.query
         else:
-            base_q = Deal.query.filter(
-                db.or_(Deal.visibility == 'all', Deal.visible_to.any(id=current_user.id))
-            )
-        active_count = base_q.filter(
-            Deal.status == 'active',
-            db.or_(Deal.date_end.is_(None), Deal.date_end >= today),
-            db.or_(Deal.date_start.is_(None), Deal.date_start > today)
-        ).count()
+            base_q = Deal.query.filter(Deal.visible_to_user_criteria(current_user))
+        active_count = base_q.filter(*Deal.accepting_criteria(today)).count()
         hot_count = base_q.filter(
             Deal.status == 'active',
             Deal.date_start.isnot(None),
@@ -448,8 +520,20 @@ def create_app():
         ).count()
         all_count = base_q.count()
 
+        # Марки для выпадашки авто-фильтра — то, что реально есть в базе,
+        # но только среди сделок, видимых текущему пользователю: иначе марка
+        # чужой скрытой сделки палит инвестору сам факт её существования
+        # (утечка метаданных закрытой платформы)
+        car_brands_q = db.session.query(Deal.car_brand).filter(
+            Deal.category == 'auto', Deal.car_brand.isnot(None))
+        if not current_user.is_admin:
+            car_brands_q = car_brands_q.filter(Deal.visible_to_user_criteria(current_user))
+        car_brands = [b[0] for b in car_brands_q.distinct().order_by(Deal.car_brand).all()]
+
         return render_template('catalog.html', ads=deals, category=cat, risk=risk, sort=sort,
                                tab=tab, date_from=date_from, date_to=date_to,
+                               price_from=price_from, price_to=price_to,
+                               car_filters=car_filters, car_brands=car_brands,
                                active_count=active_count, hot_count=hot_count,
                                closed_count=closed_count, all_count=all_count)
 
@@ -566,6 +650,12 @@ def create_app():
                 f'— сделка уже в работе.',
                 'error'
             )
+            return redirect(url_for('deal_detail', deal_id=deal.id))
+        # Страховка от дрейфа: каноническое правило живёт в Deal.accepts_investors —
+        # если политика расширится, а точечные проверки выше отстанут, заявка всё
+        # равно не пройдёт мимо общего правила
+        if not deal.accepts_investors(date.today()):
+            flash('Сделка не принимает заявки', 'error')
             return redirect(url_for('deal_detail', deal_id=deal.id))
 
         amount = safe_float(request.form.get('amount', 0))
@@ -788,16 +878,28 @@ def create_app():
                 flash('Пользователь с таким логином или email уже существует', 'error')
                 return render_template('admin_create_user.html', form=form)
 
+            tg_id = parse_telegram_id(form.telegram_id.data)
+            if telegram_id_taken(tg_id):
+                flash('Этот Telegram ID уже привязан к другому пользователю', 'error')
+                return render_template('admin_create_user.html', form=form)
+
             user = User(
                 username=form.username.data.strip(),
                 email=form.email.data.strip().lower(),
                 full_name=form.full_name.data.strip(),
                 phone=form.phone.data.strip() if form.phone.data else None,
+                telegram_id=tg_id,
                 password_hash=hash_password(form.password.data),
                 role=form.role.data
             )
             db.session.add(user)
-            db.session.commit()
+            try:
+                db.session.commit()
+            except IntegrityError:
+                # Гонка двух вкладок/воркеров на уникальных полях — не 500
+                db.session.rollback()
+                flash('Логин, email или Telegram ID уже заняты (параллельное изменение)', 'error')
+                return render_template('admin_create_user.html', form=form)
 
             log_action('user_created', 'user', user.id, f'role={user.role}')
             flash(f'Пользователь {user.full_name} создан. Логин: {user.username}', 'success')
@@ -816,21 +918,32 @@ def create_app():
                 flash('Email уже используется', 'error')
                 return render_template('admin_edit_user.html', form=form, user=user)
 
+            tg_id = parse_telegram_id(form.telegram_id.data)
+            if telegram_id_taken(tg_id, exclude_user_id=user.id):
+                flash('Этот Telegram ID уже привязан к другому пользователю', 'error')
+                return render_template('admin_edit_user.html', form=form, user=user)
+
             user.full_name = form.full_name.data.strip()
             user.email = form.email.data.strip().lower()
             user.phone = form.phone.data.strip() if form.phone.data else None
+            user.telegram_id = tg_id
             user.is_active = form.is_active.data
 
             if form.new_password.data:
                 user.password_hash = hash_password(form.new_password.data)
 
-            db.session.commit()
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                flash('Email или Telegram ID уже заняты (параллельное изменение)', 'error')
+                return render_template('admin_edit_user.html', form=form, user=user)
             log_action('user_updated', 'user', user.id)
             flash('Пользователь обновлён', 'success')
             return redirect(url_for('admin_users'))
         return render_template('admin_edit_user.html', form=form, user=user)
 
-    @app.route('/admin/users/<int:user_id>/toggle')
+    @app.route('/admin/users/<int:user_id>/toggle', methods=['POST'])
     @admin_required
     def admin_toggle_user(user_id):
         user = User.query.get_or_404(user_id)
@@ -891,13 +1004,22 @@ def create_app():
                 location=form.location.data or None,
                 floor=safe_int(form.floor.data) if form.floor.data else None,
                 total_floors=safe_int(form.total_floors.data) if form.total_floors.data else None,
-                car_brand=form.car_brand.data or None,
-                car_model=form.car_model.data or None,
+                car_brand=form.car_brand.data.strip() if form.car_brand.data else None,
+                car_model=form.car_model.data.strip() if form.car_model.data else None,
                 car_year=safe_int(form.car_year.data) if form.car_year.data else None,
                 car_power=safe_int(form.car_power.data) if form.car_power.data else None,
                 car_mileage=safe_int(form.car_mileage.data) if form.car_mileage.data else None,
+                car_engine_volume=safe_float(form.car_engine_volume.data) if form.car_engine_volume.data else None,
                 car_transmission=form.car_transmission.data or None,
                 car_fuel=form.car_fuel.data or None,
+                car_body=form.car_body.data or None,
+                car_drive=form.car_drive.data or None,
+                car_wheel=form.car_wheel.data or None,
+                car_owners=safe_int(form.car_owners.data) if form.car_owners.data else None,
+                car_condition=form.car_condition.data or None,
+                car_pts=form.car_pts.data or None,
+                car_color=form.car_color.data.strip() if form.car_color.data else None,
+                car_vin=form.car_vin.data.strip().upper() if form.car_vin.data else None,
                 created_by=current_user.id,
                 status='active'
             )
@@ -914,6 +1036,7 @@ def create_app():
 
             db.session.commit()
             log_action('deal_created', 'deal', deal.id, f'title={deal.title}')
+            emit_bot_event(bot_events.emit_deal_published, deal)
             flash('Предложение создано', 'success')
             return redirect(url_for('admin_dashboard'))
 
@@ -956,13 +1079,22 @@ def create_app():
             deal.location = form.location.data or None
             deal.floor = safe_int(form.floor.data) if form.floor.data else None
             deal.total_floors = safe_int(form.total_floors.data) if form.total_floors.data else None
-            deal.car_brand = form.car_brand.data or None
-            deal.car_model = form.car_model.data or None
+            deal.car_brand = form.car_brand.data.strip() if form.car_brand.data else None
+            deal.car_model = form.car_model.data.strip() if form.car_model.data else None
             deal.car_year = safe_int(form.car_year.data) if form.car_year.data else None
             deal.car_power = safe_int(form.car_power.data) if form.car_power.data else None
             deal.car_mileage = safe_int(form.car_mileage.data) if form.car_mileage.data else None
+            deal.car_engine_volume = safe_float(form.car_engine_volume.data) if form.car_engine_volume.data else None
             deal.car_transmission = form.car_transmission.data or None
             deal.car_fuel = form.car_fuel.data or None
+            deal.car_body = form.car_body.data or None
+            deal.car_drive = form.car_drive.data or None
+            deal.car_wheel = form.car_wheel.data or None
+            deal.car_owners = safe_int(form.car_owners.data) if form.car_owners.data else None
+            deal.car_condition = form.car_condition.data or None
+            deal.car_pts = form.car_pts.data or None
+            deal.car_color = form.car_color.data.strip() if form.car_color.data else None
+            deal.car_vin = form.car_vin.data.strip().upper() if form.car_vin.data else None
 
             # Handle image deletion
             delete_imgs = request.form.getlist('delete_images')
@@ -1000,6 +1132,9 @@ def create_app():
 
             db.session.commit()
             log_action('deal_updated', 'deal', deal.id)
+            # Дедуп по (user, deal, event): событие получат только пользователи,
+            # которым сделка стала видна впервые
+            emit_bot_event(bot_events.emit_deal_published, deal)
             flash('Предложение обновлено', 'success')
             return redirect(url_for('admin_dashboard'))
 
@@ -1024,18 +1159,22 @@ def create_app():
                         deal.visible_to.append(u)
             db.session.commit()
             log_action('visibility_updated', 'deal', deal.id, f'visibility={vis}')
+            emit_bot_event(bot_events.emit_deal_published, deal)
             flash('Видимость обновлена', 'success')
             return redirect(url_for('admin_dashboard'))
 
         return render_template('edit_visibility.html', ad=deal, investors=investors, assigned_ids=assigned_ids)
 
-    @app.route('/admin/deals/<int:deal_id>/toggle')
+    @app.route('/admin/deals/<int:deal_id>/toggle', methods=['POST'])
     @admin_required
     def toggle_deal(deal_id):
         deal = Deal.query.get_or_404(deal_id)
         deal.status = 'paused' if deal.status == 'active' else 'active'
         db.session.commit()
         log_action('deal_toggled', 'deal', deal.id, f'status={deal.status}')
+        if deal.status == 'active':
+            # Реактивация после паузы: событие получат только те, кто ещё не получал
+            emit_bot_event(bot_events.emit_deal_published, deal)
         flash('Статус обновлён', 'success')
         return redirect(url_for('admin_dashboard'))
 
@@ -1047,6 +1186,11 @@ def create_app():
             flash('Нельзя удалить сделку с инвестициями. Поставьте на паузу.', 'error')
             return redirect(url_for('admin_dashboard'))
         title = deal.title
+        # Доставленные уведомления — история ленты /feed пользователя: отвязываем
+        # от сделки (текст денормализован), чтобы FK-каскад не стёр их вместе с ней.
+        # Недоставленные (pending) каскад удалит — по удалённой сделке слать нечего.
+        BotNotification.query.filter_by(deal_id=deal.id, status='sent').update(
+            {'deal_id': None})
         db.session.delete(deal)
         db.session.commit()
         log_action('deal_deleted', 'deal', deal_id, f'title={title}')
@@ -1115,6 +1259,22 @@ def create_app():
             db.session.commit()
             log_action('existing_investment_created', 'investment', inv.id,
                        f'user={user.username}, deal={deal.title}, amount={form.amount.data}')
+            # БАГ 8: emit_deal_published фан-аутится на ВСЕХ подходящих
+            # пользователей сделки (visibility=all/selected + личные фильтры
+            # BotFilter), а не только на того, кому мы только что открыли
+            # доступ строкой выше (deal.visible_to.append(user)) — при
+            # регистрации давно известной офлайн-инвестиции это будило бы
+            # «🆕 Новая сделка» у всех инвесторов, которым сделка уже видна.
+            # Точечной «уведомить только этого пользователя о сделке» функции
+            # в bot_events нет, а сам bot_events.py в этой сессии не трогаем
+            # (правит другой агент) — поэтому минимальный корректный вариант:
+            # emit_deal_published здесь не зовём вовсе, ограничиваемся личным
+            # событием подтверждения инвестиции (только если она сразу active;
+            # для pending/rejected/closed никакого deal-уведомления нет и
+            # раньше не предполагалось).
+            if inv.status == 'active':
+                emit_bot_event(bot_events.emit_investment_event, inv,
+                               bot_events.EVENT_INV_CONFIRMED)
             flash(f'Сделка для {user.full_name} зарегистрирована', 'success')
             return redirect(url_for('admin_dashboard'))
 
@@ -1179,6 +1339,7 @@ def create_app():
             status='confirmed',
             admin_name=current_user.full_name
         )
+        emit_bot_event(bot_events.emit_investment_event, inv, bot_events.EVENT_INV_CONFIRMED)
 
         flash(f'Инвестиция {inv.amount:,.0f} руб. от {investor.full_name} подтверждена', 'success')
         return redirect(url_for('admin_pending_investments'))
@@ -1217,6 +1378,7 @@ def create_app():
             status='rejected',
             admin_name=current_user.full_name
         )
+        emit_bot_event(bot_events.emit_investment_event, inv, bot_events.EVENT_INV_REJECTED)
 
         flash(f'Заявка от {investor.full_name} отклонена', 'warning')
         return redirect(url_for('admin_pending_investments'))
@@ -1243,6 +1405,16 @@ def create_app():
             )
             db.session.add(txn)
             db.session.commit()
+            # Начисление прибыли — единственный денежный переход, который
+            # инвестор иначе не увидел бы в телеграме. Но шлём уведомление
+            # только для active/closed: rejected/pending обычно означает,
+            # что админ ошибся строкой — «Начислена прибыль» по отклонённой
+            # или ещё не подтверждённой заявке вводит инвестора в заблуждение.
+            # Саму транзакцию не трогаем — учётная логика прибыли не меняется,
+            # ограничиваем только TG-уведомление.
+            if inv.status in ('active', 'closed'):
+                emit_bot_event(bot_events.emit_investment_event, inv,
+                               bot_events.EVENT_PROFIT_PAID, amount_paid=diff)
 
         log_action('profit_updated', 'investment', inv.id,
                    f'actual_profit={new_profit}, old={old_profit}')
@@ -1331,6 +1503,7 @@ def create_app():
             )
         except Exception:
             pass
+        emit_bot_event(bot_events.emit_investment_event, inv, bot_events.EVENT_INV_CLOSED)
 
         flash(f'Инвестиция закрыта. Прибыль: {actual_profit:,.0f} ₽', 'success')
         return redirect(request.referrer or url_for('admin_dashboard'))
