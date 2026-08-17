@@ -252,6 +252,17 @@ def _emit_deal_event(app, deal, event_type, message):
     return saved
 
 
+def _broadcast_enabled(app):
+    """Массовая рассылка предложений инвесторам — под флагом BOT_DEAL_BROADCAST.
+
+    По умолчанию ВЫКЛЮЧЕНА: включение бота на проде не должно само по себе
+    начать рассылать анонсы сделок всем подключённым инвесторам. Персональные
+    события по их собственным заявкам (подтверждена/отклонена/закрыта/прибыль)
+    флагом не управляются — они адресные и приходят всегда.
+    """
+    return bool(app.config.get('BOT_DEAL_BROADCAST', False))
+
+
 def emit_deal_published(app, deal):
     """Событие «опубликована сделка» всем подходящим пользователям.
 
@@ -259,6 +270,8 @@ def emit_deal_published(app, deal):
     edit_visibility / реактивация) — дедуп гарантирует, что каждый пользователь
     получит событие по сделке один раз; недоставленным текст обновляется.
     """
+    if not _broadcast_enabled(app):
+        return 0
     if not deal.accepts_investors(date.today()):
         return 0
     return _emit_deal_event(app, deal, EVENT_DEAL_PUBLISHED,
@@ -270,6 +283,8 @@ def emit_deal_starting(app, deal, days_until):
 
     Горизонт входит в event_type (deal_starting_3, deal_starting_1, ...) —
     напоминания за 3 дня и накануне НЕ схлопываются дедупом."""
+    if not _broadcast_enabled(app):
+        return 0
     event_type = f'{EVENT_DEAL_STARTING}_{days_until}'
     return _emit_deal_event(app, deal, event_type,
                             format_deal_starting(app, deal, days_until))

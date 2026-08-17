@@ -28,6 +28,7 @@ def make_app():
     app = Flask(__name__)
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite://'  # in-memory
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['BOT_DEAL_BROADCAST'] = True  # тесты проверяют саму рассылку
     app.config['SITE_URL'] = 'https://titan.example'
     db.init_app(app)
     return app
@@ -408,6 +409,35 @@ class DeliveryRecheckTests(BotTestCase):
         d.status = 'paused'
         db.session.commit()
         self.assertTrue(_deal_event_still_relevant(n, u))
+
+
+class BroadcastFlagTests(BotTestCase):
+    """BOT_DEAL_BROADCAST: холд на массовую рассылку предложений инвесторам."""
+
+    def test_broadcast_off_blocks_deal_events(self):
+        self.app.config['BOT_DEAL_BROADCAST'] = False
+        mk_user('u1', tg=111)
+        d = mk_deal(visibility='all')
+        self.assertEqual(emit_deal_published(self.app, d), 0)
+        self.assertEqual(emit_deal_starting(self.app, mk_deal(
+            date_start=date.today() + timedelta(days=3)), 3), 0)
+        self.assertEqual(BotNotification.query.count(), 0)
+
+    def test_broadcast_off_keeps_personal_events(self):
+        # Персональные события по своим заявкам приходят независимо от флага
+        self.app.config['BOT_DEAL_BROADCAST'] = False
+        u = mk_user('u1', tg=111)
+        d = mk_deal()
+        inv = Investment(user_id=u.id, deal_id=d.id, amount=100_000, status='active')
+        db.session.add(inv)
+        db.session.commit()
+        self.assertTrue(emit_investment_event(self.app, inv, EVENT_INV_CONFIRMED))
+        self.assertEqual(BotNotification.query.count(), 1)
+
+    def test_broadcast_on_allows_deal_events(self):
+        self.app.config['BOT_DEAL_BROADCAST'] = True
+        mk_user('u1', tg=111)
+        self.assertEqual(emit_deal_published(self.app, mk_deal(visibility='all')), 1)
 
 
 class CarSummaryTests(BotTestCase):

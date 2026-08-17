@@ -43,6 +43,7 @@ def make_app():
     app = Flask(__name__)
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite://'  # in-memory
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['BOT_DEAL_BROADCAST'] = True  # тесты проверяют саму рассылку
     app.config['SITE_URL'] = 'https://titan.example'
     db.init_app(app)
     return app

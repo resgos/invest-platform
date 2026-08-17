@@ -195,6 +195,12 @@ class Config:
     # (пусто = ссылки не добавляются)
     SITE_URL = os.getenv('SITE_URL', '').rstrip('/')
 
+    # Массовая рассылка анонсов сделок инвесторам («Новая сделка для вас»,
+    # «Сделка скоро стартует»). ВЫКЛЮЧЕНА по умолчанию: включение бота не должно
+    # само по себе начать рассылку всем подключённым. Персональные события по
+    # собственным заявкам инвестора приходят независимо от этого флага.
+    BOT_DEAL_BROADCAST = os.getenv('BOT_DEAL_BROADCAST', 'false').lower() in ('true', '1', 'yes')
+
     # Rate limiter storage (Redis для multi-worker prod, иначе in-memory)
     RATE_LIMIT_STORAGE_URI = os.getenv('RATE_LIMIT_STORAGE_URI', 'memory://')
 
