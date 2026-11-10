@@ -204,5 +204,24 @@ class Config:
     # Rate limiter storage (Redis для multi-worker prod, иначе in-memory)
     RATE_LIMIT_STORAGE_URI = os.getenv('RATE_LIMIT_STORAGE_URI', 'memory://')
 
+    # Сколько reverse-proxy (nginx) стоит перед приложением. 0 = никому не верим
+    # (dev, прямой доступ). В проде gunicorn слушает только 127.0.0.1 за nginx —
+    # ставим 1, иначе request.remote_addr у всех 127.0.0.1 и лимитер считает
+    # всех посетителей одним клиентом (5 чужих неудачных логинов = блок для всех).
+    TRUSTED_PROXIES = max(0, _int_env('TRUSTED_PROXIES', 0))
+
     # Деплой / бэкапы
     DEPLOY_DIR = os.getenv('DEPLOY_DIR', 'gruppa-titan')
+
+
+def apply_trusted_proxies(app):
+    """Доверить X-Forwarded-For/-Proto стольким прокси, сколько в TRUSTED_PROXIES.
+
+    ProxyFix берёт N-е значение С КОНЦА X-Forwarded-For — то, что дописал наш
+    nginx; подставленные клиентом значения левее и игнорируются.
+    """
+    n = app.config.get('TRUSTED_PROXIES', 0) or 0
+    if n > 0:
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=n, x_proto=n)
+    return app

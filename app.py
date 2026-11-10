@@ -14,7 +14,7 @@ from flask_limiter.util import get_remote_address
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
 
-from config import Config
+from config import Config, apply_trusted_proxies
 from models import (db, User, Deal, Investment, Transaction, AuditLog,
                     BotNotification, deal_visibility, CAR_LABELS)
 from forms import (LoginForm, CreateUserForm, EditUserForm, DealForm,
@@ -29,6 +29,7 @@ import bot_events
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
+    apply_trusted_proxies(app)
 
     # Extensions
     db.init_app(app)
