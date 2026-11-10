@@ -253,7 +253,9 @@ if ! grep -q "notify_upcoming.py" "$CRON_FILE"; then
 0 9 * * * cd $APP_DIR && $APP_DIR/venv/bin/python notify_upcoming.py -d 3 >> $APP_DIR/logs/notify.log 2>&1
 EOF
 fi
-sudo -u "$DEPLOY_USER" crontab "$CRON_FILE"
+# Через stdin: mktemp создаёт файл root:root 0600, и `crontab <файл>` от имени
+# deploy падал с «Permission denied» — установка обрывалась на последнем шаге
+sudo -u "$DEPLOY_USER" crontab - < "$CRON_FILE"
 rm -f "$CRON_FILE"
 ok "Firewall и cron настроены"
 
