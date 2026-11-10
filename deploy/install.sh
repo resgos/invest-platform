@@ -11,6 +11,12 @@
 #      | sudo bash
 #
 #  Идемпотентен — повторный запуск безопасен (rebuild-режим: git pull + restart).
+#
+#  Общий сервер (рядом живут чужие сайты/службы) + свой HTTPS-поддомен:
+#    sudo SHARED_HOST=1 DOMAIN=titan.example.com bash install.sh
+#  SHARED_HOST=1 — не трогать ufw и чужой nginx default-сайт;
+#  DOMAIN        — именованный server-блок вместо default_server + сертификат
+#                  Let's Encrypt (certbot --nginx, редирект http→https).
 # ============================================================
 set -euo pipefail
 
@@ -19,6 +25,9 @@ REPO_URL="${REPO_URL:-https://github.com/resgos/invest-platform.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 DEPLOY_USER="${DEPLOY_USER:-deploy}"
 APP_DIR="${APP_DIR:-/home/${DEPLOY_USER}/gruppa-titan}"
+DOMAIN="${DOMAIN:-}"
+SHARED_HOST="${SHARED_HOST:-0}"
+CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
 
 # ── Цвета ──
 G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[0;34m'; N='\033[0m'
@@ -39,12 +48,22 @@ echo "════════════════════════�
 echo "  Репо:     ${REPO_URL}"
 echo "  Ветка:    ${REPO_BRANCH}"
 echo "  Каталог:  ${APP_DIR}"
+echo "  Домен:    ${DOMAIN:-— (default_server, без HTTPS)}"
+echo "  Общий сервер: $([[ "$SHARED_HOST" == "1" ]] && echo да || echo нет)"
 echo "══════════════════════════════════════════════════════════"
 echo
+
+if [[ -n "$DOMAIN" && ! "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+    err "Недопустимое имя домена: $DOMAIN"
+    exit 1
+fi
 
 # ── 1. Системные пакеты ──
 info "Шаг 1/9: установка системных пакетов..."
 export DEBIAN_FRONTEND=noninteractive
+EXTRA_PKGS=()
+if [[ "$SHARED_HOST" != "1" ]]; then EXTRA_PKGS+=(ufw); fi
+if [[ -n "$DOMAIN" ]]; then EXTRA_PKGS+=(certbot python3-certbot-nginx); fi
 apt-get update -qq
 apt-get install -y -qq \
     git \
@@ -52,8 +71,9 @@ apt-get install -y -qq \
     build-essential libssl-dev libffi-dev \
     nginx redis-server \
     sqlite3 \
-    ufw cron \
-    ca-certificates curl >/dev/null
+    cron \
+    ca-certificates curl \
+    "${EXTRA_PKGS[@]}" >/dev/null
 ok "Системные пакеты установлены"
 
 # ── 2. Пользователь deploy ──
@@ -100,10 +120,18 @@ if [[ ! -f "$APP_DIR/.env" ]]; then
     cp "$APP_DIR/deploy/.env.example" "$APP_DIR/.env"
     SECRET=$(python3 -c "import secrets; print(secrets.token_hex(48))")
     sed -i "s|REPLACE_WITH_RANDOM_HEX|$SECRET|" "$APP_DIR/.env"
+    # Админ создаётся при ПЕРВОМ старте сервиса с паролем из .env — шаблонный
+    # пароль из публичного репозитория стал бы боевым. Генерируем случайный
+    # (буквы+цифры: проходит политику «заглавная+строчная+цифра», безопасен для sed/.env).
+    ADMIN_PW=$(python3 -c "import secrets,string; a=string.ascii_letters+string.digits; print('Ti'+''.join(secrets.choice(a) for _ in range(18))+'7')")
+    sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=${ADMIN_PW}|" "$APP_DIR/.env"
+    if [[ -n "$DOMAIN" ]]; then
+        sed -i "s|^SITE_URL=.*|SITE_URL=https://${DOMAIN}|" "$APP_DIR/.env"
+    fi
     chown "$DEPLOY_USER:$DEPLOY_USER" "$APP_DIR/.env"
     chmod 600 "$APP_DIR/.env"
-    warn ".env создан с автоматическим SECRET_KEY."
-    warn "ОБЯЗАТЕЛЬНО заполните: ADMIN_PASSWORD, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_PROXY"
+    warn ".env создан: SECRET_KEY и пароль админа сгенерированы (ADMIN_PASSWORD в .env)."
+    warn "Telegram (по желанию): TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_PROXY"
     warn "  → sudo nano $APP_DIR/.env"
 else
     ok ".env уже существует — пропускаем"
@@ -129,6 +157,11 @@ systemctl restart gruppa-titan || true
 sleep 2
 if systemctl is-active --quiet gruppa-titan; then
     ok "Сервис gruppa-titan запущен"
+    # На чистой установке шаг 6 нашёл пустоту (БД создаёт первый старт приложения
+    # через db.create_all) — прогоняем миграции ещё раз: они идемпотентны и
+    # пометят себя применёнными, чтобы будущие update.sh не начинали с 001.
+    sudo -u "$DEPLOY_USER" bash -c "cd '$APP_DIR' && '$APP_DIR/venv/bin/python' migrate.py" >/dev/null || \
+        warn "Повторный прогон миграций вернул non-zero: sudo -u $DEPLOY_USER $APP_DIR/venv/bin/python $APP_DIR/migrate.py"
 else
     warn "Сервис не стартовал — продолжаем установку. Проверьте после правки .env:"
     warn "    sudo journalctl -u gruppa-titan -n 50"
@@ -147,19 +180,64 @@ fi
 
 # ── 8. Nginx ──
 info "Шаг 8/9: Nginx..."
-cp "$APP_DIR/deploy/nginx.conf" /etc/nginx/sites-available/gruppa-titan
-ln -sf /etc/nginx/sites-available/gruppa-titan /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default
-nginx -t
+NGINX_TARGET=/etc/nginx/sites-available/gruppa-titan
+if [[ -f "$NGINX_TARGET" ]] && grep -q "managed by Certbot" "$NGINX_TARGET"; then
+    # Повторный запуск: конфиг уже с SSL от certbot — перезапись снесла бы 443
+    ok "Конфиг nginx под управлением certbot (HTTPS) — не перезаписываю"
+else
+    NGINX_TMP="$(mktemp)"
+    bash "$APP_DIR/deploy/render-nginx.sh" "$DOMAIN" > "$NGINX_TMP"
+    [[ -f "$NGINX_TARGET" ]] && cp "$NGINX_TARGET" "${NGINX_TARGET}.bak.$(date +%Y%m%d-%H%M%S)"
+    install -m 644 "$NGINX_TMP" "$NGINX_TARGET"
+    rm -f "$NGINX_TMP"
+fi
+ln -sf "$NGINX_TARGET" /etc/nginx/sites-enabled/
+if [[ "$SHARED_HOST" != "1" && -z "$DOMAIN" ]]; then
+    # Выделенный VPS: наш блок — default_server, штатный default-сайт мешает
+    rm -f /etc/nginx/sites-enabled/default
+fi
+if ! nginx -t; then
+    err "nginx -t не прошёл — снимаю наш сайт, чтобы не уронить nginx целиком"
+    rm -f /etc/nginx/sites-enabled/gruppa-titan
+    exit 1
+fi
 systemctl reload nginx
 ok "Nginx настроен"
 
+# ── 8б. HTTPS (Let's Encrypt) ──
+if [[ -n "$DOMAIN" ]]; then
+    info "Шаг 8б: сертификат Let's Encrypt для ${DOMAIN}..."
+    if grep -q "managed by Certbot" "$NGINX_TARGET"; then
+        ok "Сертификат уже подключён"
+    else
+        CERTBOT_ACCOUNT=(--register-unsafely-without-email)
+        [[ -n "$CERTBOT_EMAIL" ]] && CERTBOT_ACCOUNT=(-m "$CERTBOT_EMAIL")
+        if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --redirect \
+                "${CERTBOT_ACCOUNT[@]}"; then
+            ok "HTTPS включён: https://${DOMAIN}"
+        else
+            warn "certbot не выпустил сертификат — сайт пока только по http://${DOMAIN}"
+            warn "  Повторить: sudo certbot --nginx -d ${DOMAIN} --redirect"
+        fi
+    fi
+    if grep -q "managed by Certbot" "$NGINX_TARGET"; then
+        # Cookie сессии — только по HTTPS (до сертификата логин по http бы ломался)
+        sed -i "s|^SESSION_COOKIE_SECURE=.*|SESSION_COOKIE_SECURE=true|" "$APP_DIR/.env"
+        systemctl restart gruppa-titan || true
+    fi
+fi
+
 # ── 9. Firewall + cron ──
 info "Шаг 9/9: ufw + cron..."
-ufw --force enable >/dev/null 2>&1 || true
-ufw allow 22/tcp >/dev/null 2>&1 || true
-ufw allow 80/tcp >/dev/null 2>&1 || true
-ufw allow 443/tcp >/dev/null 2>&1 || true
+if [[ "$SHARED_HOST" == "1" ]]; then
+    # На общем сервере включение ufw закрыло бы порты соседних служб
+    warn "SHARED_HOST=1 — файрвол не трогаю (порты 80/443 открывает облако/хозяин сервера)"
+else
+    ufw --force enable >/dev/null 2>&1 || true
+    ufw allow 22/tcp >/dev/null 2>&1 || true
+    ufw allow 80/tcp >/dev/null 2>&1 || true
+    ufw allow 443/tcp >/dev/null 2>&1 || true
+fi
 
 CRON_FILE="$(mktemp)"
 sudo -u "$DEPLOY_USER" crontab -l 2>/dev/null > "$CRON_FILE" || true
@@ -175,18 +253,25 @@ if ! grep -q "notify_upcoming.py" "$CRON_FILE"; then
 0 9 * * * cd $APP_DIR && $APP_DIR/venv/bin/python notify_upcoming.py -d 3 >> $APP_DIR/logs/notify.log 2>&1
 EOF
 fi
-sudo -u "$DEPLOY_USER" crontab "$CRON_FILE"
+# Через stdin: mktemp создаёт файл root:root 0600, и `crontab <файл>` от имени
+# deploy падал с «Permission denied» — установка обрывалась на последнем шаге
+sudo -u "$DEPLOY_USER" crontab - < "$CRON_FILE"
 rm -f "$CRON_FILE"
 ok "Firewall и cron настроены"
 
 # ── Финал ──
-IP=$(curl -s -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+if [[ -n "$DOMAIN" ]]; then
+    if grep -q "managed by Certbot" "$NGINX_TARGET"; then SITE="https://${DOMAIN}/"; else SITE="http://${DOMAIN}/"; fi
+else
+    IP=$(curl -s -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+    SITE="http://${IP}/"
+fi
 echo
 echo "════════════════════════════════════════════════════════════"
 ok "Установка завершена!"
 echo "════════════════════════════════════════════════════════════"
 echo
-echo "  Открыть:    http://${IP}/"
+echo "  Открыть:    ${SITE}"
 echo "  Логин:      admin"
 echo "  Пароль:     из ADMIN_PASSWORD в $APP_DIR/.env"
 echo
@@ -197,13 +282,12 @@ echo "  Перезапуск: systemctl restart gruppa-titan"
 echo "  Обновление: sudo bash $APP_DIR/deploy/update.sh"
 echo
 warn "СЛЕДУЮЩИЕ ШАГИ:"
-echo "   1. Заполните пароль и Telegram-токены:"
-echo "        sudo nano $APP_DIR/.env"
-echo "   2. Перезапустите сервис:"
-echo "        sudo systemctl restart gruppa-titan"
-echo "   3. Когда появится домен — поднимите HTTPS:"
-echo "        sudo apt install -y certbot python3-certbot-nginx"
-echo "        sudo certbot --nginx -d ВАШ_ДОМЕН"
-echo "        # Затем в .env: SESSION_COOKIE_SECURE=true"
-echo "        sudo systemctl restart gruppa-titan"
+echo "   1. Пароль админа:  sudo grep ^ADMIN_PASSWORD $APP_DIR/.env"
+echo "      (после первого входа смените его в профиле)"
+echo "   2. Telegram-токены и прокси (по желанию):"
+echo "        sudo nano $APP_DIR/.env && sudo systemctl restart gruppa-titan gruppa-titan-bot"
+if [[ -z "$DOMAIN" ]]; then
+echo "   3. Когда появится домен — переустановите с HTTPS:"
+echo "        sudo DOMAIN=ВАШ_ДОМЕН bash $APP_DIR/deploy/install.sh"
+fi
 echo

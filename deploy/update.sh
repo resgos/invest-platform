@@ -91,17 +91,36 @@ fi
 # про домен и сертификаты; чтобы применить его поверх HTTPS-конфига, нужно
 # осознанное решение: FORCE_NGINX=1 bash update.sh, а после — certbot --reinstall.
 NGINX_TARGET="/etc/nginx/sites-available/${NGINX_SITE}"
-if [[ -f "$APP_DIR/deploy/nginx.conf" ]] && [[ -f "$NGINX_TARGET" ]] && ! cmp -s "$APP_DIR/deploy/nginx.conf" "$NGINX_TARGET"; then
-    if grep -q "managed by Certbot" "$NGINX_TARGET" && [[ "${FORCE_NGINX:-0}" != "1" ]]; then
-        warn "nginx.conf под управлением certbot (HTTPS) — НЕ перезаписываю."
-        warn "  Нужно применить репозиторный конфиг: FORCE_NGINX=1 bash deploy/update.sh,"
-        warn "  затем вернуть сертификат: sudo certbot --nginx -d <домен> --reinstall --redirect"
+if [[ -f "$APP_DIR/deploy/nginx.conf" ]] && [[ -f "$NGINX_TARGET" ]]; then
+    # Домен берём из уже стоящего конфига (или DOMAIN=...): на общем сервере
+    # наш блок именованный, без default_server — сырой nginx.conf его бы сломал.
+    CUR_NAME="$(grep -m1 -oP '^\s*server_name\s+\K[^;\s]+' "$NGINX_TARGET" || true)"
+    RENDER_DOMAIN="${DOMAIN:-${CUR_NAME}}"
+    NGINX_RENDERED="$(mktemp)"
+    if [[ -f "$APP_DIR/deploy/render-nginx.sh" ]]; then
+        bash "$APP_DIR/deploy/render-nginx.sh" "$RENDER_DOMAIN" > "$NGINX_RENDERED"
     else
-        info "nginx.conf изменился — обновляем"
-        cp "$NGINX_TARGET" "${NGINX_TARGET}.bak.$(date +%Y%m%d-%H%M%S)"
-        cp "$APP_DIR/deploy/nginx.conf" "$NGINX_TARGET"
-        nginx -t && systemctl reload nginx
+        cp "$APP_DIR/deploy/nginx.conf" "$NGINX_RENDERED"
     fi
+    if ! cmp -s "$NGINX_RENDERED" "$NGINX_TARGET"; then
+        if grep -q "managed by Certbot" "$NGINX_TARGET" && [[ "${FORCE_NGINX:-0}" != "1" ]]; then
+            warn "nginx.conf под управлением certbot (HTTPS) — НЕ перезаписываю."
+            warn "  Нужно применить репозиторный конфиг: FORCE_NGINX=1 bash deploy/update.sh,"
+            warn "  затем вернуть сертификат: sudo certbot --nginx -d <домен> --reinstall --redirect"
+        else
+            info "nginx.conf изменился — обновляем (server_name: ${RENDER_DOMAIN:-_})"
+            NGINX_BAK="${NGINX_TARGET}.bak.$(date +%Y%m%d-%H%M%S)"
+            cp "$NGINX_TARGET" "$NGINX_BAK"
+            install -m 644 "$NGINX_RENDERED" "$NGINX_TARGET"
+            if nginx -t; then
+                systemctl reload nginx
+            else
+                err "nginx -t не прошёл — возвращаю прежний конфиг"
+                cp "$NGINX_BAK" "$NGINX_TARGET"
+            fi
+        fi
+    fi
+    rm -f "$NGINX_RENDERED"
 fi
 
 SERVICE_TARGET="/etc/systemd/system/${SERVICE_FILE}"

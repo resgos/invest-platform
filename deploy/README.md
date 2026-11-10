@@ -25,6 +25,36 @@ curl -fsSL https://raw.githubusercontent.com/resgos/invest-platform/main/deploy/
 
 В конце напечатает URL и пароль.
 
+### Общий сервер + свой HTTPS-поддомен
+
+Если на сервере уже живут другие сайты и службы (ufw трогать нельзя, чужой
+`default_server` занимать нельзя):
+
+```bash
+git clone https://github.com/resgos/invest-platform.git /tmp/titan-src
+sudo SHARED_HOST=1 DOMAIN=titan.<IP>.sslip.io bash /tmp/titan-src/deploy/install.sh
+```
+
+- `SHARED_HOST=1` — файрвол и штатный `default`-сайт nginx не трогаются;
+- `DOMAIN` — nginx-блок с `server_name DOMAIN` (рендерит `deploy/render-nginx.sh`),
+  сертификат Let's Encrypt через `certbot --nginx --redirect`, в `.env` сами
+  ставятся `SITE_URL=https://DOMAIN` и `SESSION_COOKIE_SECURE=true`;
+- пароль админа генерируется случайно: `sudo grep ^ADMIN_PASSWORD /home/deploy/gruppa-titan/.env`.
+
+`update.sh` сохраняет `server_name` уже стоящего конфига, конфиг под certbot не перезаписывает.
+
+```mermaid
+flowchart LR
+    U[Браузер] -->|443 TLS| N[nginx: server_name DOMAIN]
+    N -->|/static| S[(static/)]
+    N -->|X-Forwarded-For/Proto| G[gunicorn 127.0.0.1:5000]
+    G --> F[Flask app<br/>ProxyFix TRUSTED_PROXIES=1]
+    F --> D[(SQLite instance/invest.db)]
+    F --> R[(redis: лимитер)]
+    B[gruppa-titan-bot] --> D
+    B -->|socks5h| T[api.telegram.org]
+```
+
 ---
 
 ## Шаг 1. Подготовка ДО установки
